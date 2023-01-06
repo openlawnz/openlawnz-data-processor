@@ -1,3 +1,3 @@
 # openlawnz-data-processor
 
-Work in progress.
+Run in VS Code with a devcontainer.

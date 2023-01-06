@@ -7,7 +7,7 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Launch Program",
+            "name": "Import Cases (Sample)",
             "skipFiles": [
                 "<node_internals>/**"
             ],
@@ -15,7 +15,38 @@
             "cwd": "${workspaceFolder}/dist",
             "program": "${workspaceFolder}/src/main.ts",
             "envFile": "${workspaceFolder}/.env",
+            "args": ["--importCases", "--casesProvider=./data/sample-cases.json"],
             "runtimeArgs": [],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Import Legislation",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "preLaunchTask": "tsc: build - tsconfig.json",
+            "cwd": "${workspaceFolder}/dist",
+            "program": "${workspaceFolder}/src/main.ts",
+            "args": ["--importlegislation"],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Import Static",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "preLaunchTask": "tsc: build - tsconfig.json",
+            "cwd": "${workspaceFolder}/dist",
+            "program": "${workspaceFolder}/src/main.ts",
+            "args": ["--importStatic"],
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
             ]

@@ -34,6 +34,9 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                 worker.on('error', (err: U) => {
                     task.isProcessing = false;
                 });
+                worker.on('exit', () => {
+                    task.isProcessing = false;
+                });
 
                 task = {
                     id: crypto.randomUUID(),
@@ -61,3 +64,21 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
         setImmediate(run)
     });
 }
+
+export function getCitation(str: string) {
+	const regCite = /(\[?\d{4}\]?)(\s*?)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+)*/;
+	// try for neutral citation
+    const match = str.match(regCite);
+	if (match && match.length > 0) {
+		return match[0];
+	} else {
+		// try for other types of citation
+		const otherCite = /((\[\d{4}\])(\s*)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+))|((HC|DC|FC) (\w{2,4} (\w{3,4}).*)(?=\s\d{1,2} ))|(COA)(\s.{5,10}\/\d{4})|(SC\s\d{0,5}\/\d{0,4})/;
+		const otherMatch = str.match(otherCite);
+        if (otherMatch  && otherMatch.length > 0) {
+			return otherMatch[0];
+		} else {
+			return null;
+		}
+	}
+};

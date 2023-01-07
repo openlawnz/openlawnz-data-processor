@@ -69,5 +69,6 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
     }));
 
     parentPort!.postMessage(results);
+    process.exit();
     
 }))

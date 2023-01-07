@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "worker_threads";
-import CaseRecord from "./CaseRecord.js"
+import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 
 if (!parentPort) {
     throw new Error("Must be run in a thread context");
@@ -22,15 +22,16 @@ import {
     judgeTitles,
     getVersion
 } from '@openlawnz/openlawnz-parsers';
+import path from "path";
 
 const conversionEngine = 'pdfjs';
 const parsersVersion = getVersion();
 
-const allLegislation = workerData;
+const { localCasePath, allLegislation } = workerData;
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
 
-    const results = await Promise.all(records.map(async caseRecord => {
+    const results = await Promise.all(records.map(async (caseRecord): Promise<ProcessedCaseRecord> => {
 
         let pages;
         let caseText;
@@ -38,7 +39,9 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
         let footnotes;
         let isValid;
 
-        pages = await convertPDFURLWithPDFJS(caseRecord.PDFUrl);
+        const filePath = "file://" + path.join(localCasePath, caseRecord.fileKey);
+        
+        pages = await convertPDFURLWithPDFJS(filePath);
 
         ({ caseText, footnoteContexts, footnotes, isValid } = parseFromPDFJSConversion(pages));
 
@@ -74,33 +77,34 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
         });
         const judges = parseJudges({ judgeTitles, fileKey, caseText });
 
-        let obj: {
-            [index: string]: any
-        } = {
+        return new ProcessedCaseRecord(
+            caseRecord.fileURL,
+            caseRecord.fileKey,
+            caseRecord.fileProvider,
+            caseRecord.caseDate,
+            caseRecord.caseNames,
+            caseRecord.dateAccessed,
             isValid,
             caseText,
             caseCitations,
             caseLocation,
             representation,
             category,
-            fileProvider,
             court,
-            fileKey,
             filingNumber,
             lawReport,
             legislation,
             judges,
             conversionEngine,
-            pdfChecksum: '',
-            parsersVersion,
-        };
+            '',
+            parsersVersion
 
-        Object.keys(obj).forEach((key) => obj[key] === undefined && delete obj[key]);
-
-        return obj;
+        );
 
     }))
 
     parentPort!.postMessage(results);
+
+    process.exit();
 
 }));

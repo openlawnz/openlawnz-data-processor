@@ -9,7 +9,7 @@
         "clean": "tsc --build --clean",
         "import:static": "node ./dist/main.js --importStatic",
         "import:legislation": "node ./dist/main.js --importLegislation",
-        "import:samplecases": "node -r dotenv/config ./dist/main.js --importCases --casesProvider=./data/sample-cases.json"
+        "import:samplecases": "node -r dotenv/config ./dist/main.js --importCases --casesProvider=localjson --fileLocation=./data/sample-cases.json"
     },
     "repository": {
         "type": "git",
@@ -25,10 +25,12 @@
         "@aws-sdk/client-s3": "^3.241.0",
         "@openlawnz/openlawnz-parsers": "^1.0.2",
         "dotenv": "^16.0.3",
+        "inquirer": "^9.1.4",
         "pg": "^8.8.0",
         "yargs": "^17.6.2"
     },
     "devDependencies": {
+        "@types/inquirer": "^9.0.3",
         "@types/node": "^18.7.13",
         "@types/pg": "^8.6.6",
         "@types/yargs": "^17.0.19"

@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import inquirer from 'inquirer';
 import { courts, lawReports, judgeTitles, parseCaseCitations, parseCaseToCase } from "@openlawnz/openlawnz-parsers";
 import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitation.js"
+import cliProgress from 'cli-progress';
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 
 const argv = await yargs(hideBin(process.argv)).argv
@@ -268,20 +269,21 @@ if (argv.importCases) {
 
 			const chunkedProcessedCases: Array<ProcessedCaseRecord[]> = chunkArrayInGroups(processedCases, 10);
 
+			console.log("Truncating previous dataset")
 			//====================================================================
 			// TRUNCATE everything since we reprocess the whole dataset
 			//====================================================================
 
 			await pool.query(`
 				TRUNCATE TABLE 
-					case_citations, 
-					case_pdfs, 
-					cases, 
-					cases_cited, 
-					category_to_cases,
-					judge_to_cases,
-					legislation_to_cases,
-					party_and_representative_to_cases
+					main.case_citations, 
+					main.case_pdfs, 
+					main.cases, 
+					main.cases_cited, 
+					main.category_to_cases,
+					main.judge_to_cases,
+					main.legislation_to_cases,
+					main.party_and_representative_to_cases
 				RESTART IDENTITY CASCADE
 			`);
 
@@ -289,7 +291,15 @@ if (argv.importCases) {
 			// Put case and related info into DB
 			//====================================================================
 
+			console.log("Processing cases in chunks of 10")
+
+			const casesBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+
+			casesBar.start(chunkedProcessedCases.length, 0);
+
 			for (var i = 0; i < chunkedProcessedCases.length; i++) {
+
+				casesBar.update(i + 1);
 
 				const cases = chunkedProcessedCases[i]
 
@@ -607,6 +617,8 @@ if (argv.importCases) {
 
 			}
 
+			casesBar.stop();
+
 
 			//====================================================================
 			// Double Citations
@@ -614,7 +626,12 @@ if (argv.importCases) {
 
 			await (async () => {
 
-				const allCitations: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
+				const allCitationsRaw: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
+				// TODO: Fix case_id / fileKey
+				const allCitations = allCitationsRaw.map(x => ({
+					...x,
+					fileKey: (x as any).case_id
+				}));
 
 				for (var i = 0; i < chunkedProcessedCases.length; i++) {
 
@@ -663,8 +680,12 @@ if (argv.importCases) {
 
 			await (async () => {
 
-				// TODO: Could be more efficient maybe with the previous query for Double Citations
-				const allCitations: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
+				const allCitationsRaw: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
+				// TODO: Fix case_id / fileKey
+				const allCitations = allCitationsRaw.map(x => ({
+					...x,
+					fileKey: (x as any).case_id
+				}));
 
 				for (var i = 0; i < chunkedProcessedCases.length; i++) {
 

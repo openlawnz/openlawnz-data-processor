@@ -9,7 +9,7 @@
         "clean": "tsc --build --clean",
         "import:static": "node ./dist/main.js --importStatic",
         "import:legislation": "node ./dist/main.js --importLegislation",
-        "import:samplecases": "node -r dotenv/config ./dist/main.js --importCases --casesProvider=localjson --fileLocation=./data/sample-cases.json"
+        "import:jdo": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env  --importCases --casesProvider=jdo"
     },
     "repository": {
         "type": "git",

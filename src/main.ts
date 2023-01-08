@@ -154,6 +154,8 @@ if (argv.importCases) {
 
 		if (argv.casesProvider == "jdo") {
 
+			console.log("Get cases from JDO");
+
 			const data = await fetch("https://forms.justice.govt.nz/solr/jdo/select?q=*&facet=true&facet.field=Location&facet.field=Jurisdiction&facet.limit=-1&facet.mincount=1&rows=20&json.nl=map&fq=JudgmentDate%3A%5B*%20TO%202019-2-1T23%3A59%3A59Z%5D&sort=JudgmentDate%20desc&fl=CaseName%2C%20JudgmentDate%2C%20DocumentName%2C%20id%2C%20score&wt=json")
 			const json = await data.json();
 			const docs = json.response.docs;
@@ -180,6 +182,8 @@ if (argv.importCases) {
 
 		if (recordsToProcess.length > 0) {
 
+			console.log(`recordsToProcess ${recordsToProcess.length}`)
+
 			const allLegislation = (await pool.query("SELECT * FROM main.legislation")).rows;
 
 			const MAX_THREADS = 4;
@@ -199,6 +203,7 @@ if (argv.importCases) {
 			}
 
 			async function sequentiallyDownloadFilesWithDelays(caseRecords: CaseRecord[]): Promise<{ casesToExclude: CaseRecord[] }> {
+				console.log(`sequentiallyDownloadFilesWithDelays ${caseRecords.length}`)
 				var casesToExclude: CaseRecord[] = [];
 				for (var i = 0; i < caseRecords.length; i++) {
 					const caseRecord = caseRecords[i];
@@ -226,7 +231,10 @@ if (argv.importCases) {
 				return multithreadProcess(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation });
 			}
 
+			console.log(`syncCasePDFs: ${recordsToProcess.length}`)
 			var caseRecordsNotInCaches = await syncCasePDFs(recordsToProcess);
+
+			console.log("caseRecordsNotInCaches: " + caseRecordsNotInCaches.length);
 
 			if (caseRecordsNotInCaches.length > 0) {
 
@@ -238,7 +246,7 @@ if (argv.importCases) {
 						{
 							name: "answer",
 							type: "confirm",
-							message: `There are ${caseRecordsNotInCaches} cases to download from source. Continue?`,
+							message: `There are ${caseRecordsNotInCaches.length} cases to download from source. Continue?`,
 							default: false
 						}
 

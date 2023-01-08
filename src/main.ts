@@ -9,7 +9,6 @@ import crypto from 'crypto';
 import inquirer from 'inquirer';
 import { courts, lawReports, judgeTitles, parseCaseCitations, parseCaseToCase } from "@openlawnz/openlawnz-parsers";
 import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitation.js"
-import cliProgress from 'cli-progress';
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 
 const argv = await yargs(hideBin(process.argv)).argv
@@ -265,6 +264,8 @@ if (argv.importCases) {
 				}
 			}
 
+			console.log("Process cases");
+
 			const processedCases = await processCases(recordsToProcess);
 
 			const chunkedProcessedCases: Array<ProcessedCaseRecord[]> = chunkArrayInGroups(processedCases, 10);
@@ -291,16 +292,10 @@ if (argv.importCases) {
 			// Put case and related info into DB
 			//====================================================================
 
-			console.log("Processing cases in chunks of 10")
-
-			const casesBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
-
-			casesBar.start(chunkedProcessedCases.length, 0);
+			console.log("Put in DB");
 
 			for (var i = 0; i < chunkedProcessedCases.length; i++) {
-
-				casesBar.update(i + 1);
-
+				
 				const cases = chunkedProcessedCases[i]
 
 				await Promise.all(cases.map(caseRecord => (async () => {
@@ -617,8 +612,6 @@ if (argv.importCases) {
 
 			}
 
-			casesBar.stop();
-
 
 			//====================================================================
 			// Double Citations
@@ -724,15 +717,12 @@ if (argv.importCases) {
 
 			})()
 
-
+			console.log("Done");
 
 		} else {
 			console.log("No records to process")
 		}
-
-
-
-
+		
 	} else {
 		console.log("No case provider");
 	}

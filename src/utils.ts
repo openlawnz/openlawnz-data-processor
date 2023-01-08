@@ -11,6 +11,7 @@ export function chunkArrayInGroups(arr: Array<any>, size: number) {
 export async function multithreadProcess<T, U>(threads: number, records: Array<T>, workerScript: string, globalWorkerData?: object): Promise<Array<U>> {
 
     return new Promise((resolve, reject) => {
+        let runner: NodeJS.Timeout;
         let allResults: Array<U> = [];
         var tasks: {
             id: string,
@@ -48,18 +49,24 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
         }
         function run() {
             var freeTasksFilter = tasks.filter(x => x.isProcessing == false);
-            if (recordChunks.length > 0 && freeTasksFilter.length > 0) {
+           
+            if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
+                console.log('Workers finished')
+                for(var i = 0; i < freeTasksFilter.length; i++) {
+                    freeTasksFilter[i].worker.terminate();
+                }
+                resolve(allResults);
+                clearTimeout(runner);
+                return;
+
+            } else if (recordChunks.length > 0 && freeTasksFilter.length > 0) {
+                console.log('Send records to worker id:' + freeTasksFilter[0].id)
                 var records = recordChunks.shift();
                 freeTasksFilter[0].isProcessing = true
                 freeTasksFilter[0].worker.postMessage(records)
             }
-            else if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
-                resolve(allResults);
-                for(var i = 0; i < freeTasksFilter.length; i++) {
-                    freeTasksFilter[i].worker.terminate();
-                }
-            }
-            setImmediate(run);
+            runner = setTimeout(run, 10);
+
         }
         setImmediate(run)
     });

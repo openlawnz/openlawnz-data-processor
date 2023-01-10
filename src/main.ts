@@ -205,17 +205,19 @@ if (argv.importCases) {
 				var casesToExclude: CaseRecord[] = [];
 				for (var i = 0; i < caseRecords.length; i++) {
 					const caseRecord = caseRecords[i];
-
-					const res = await fetch(caseRecord.fileURL);
-					if (res.status == 200 && res.body) {
-						var data = await res.arrayBuffer()
-						writeFileSync(path.join(localCasePath, caseRecord.fileKey), Buffer.from(data))
-					} else {
-						casesToExclude = casesToExclude.concat(caseRecords.splice(i, 1));
-						console.log(`Cannot download file ${caseRecord.fileURL}`);
-					}
-					if (!caseRecord.fileURL.startsWith("https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com")) {
-						await setTimeoutP(5000)
+					try {
+						const res = await fetch(caseRecord.fileURL);
+						if (res.status == 200 && res.body) {
+							var data = await res.arrayBuffer()
+							writeFileSync(path.join(localCasePath, caseRecord.fileKey), Buffer.from(data))
+						} else {
+							casesToExclude = casesToExclude.concat(caseRecords.splice(i, 1));
+							console.log(`Cannot download file ${caseRecord.fileURL}`);
+						}
+					} finally {
+						if (!caseRecord.fileURL.startsWith("https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com")) {
+							await setTimeoutP(5000)
+						}
 					}
 				}
 
@@ -301,7 +303,7 @@ if (argv.importCases) {
 			console.log("Put in DB");
 
 			for (var i = 0; i < chunkedProcessedCases.length; i++) {
-				
+
 				const cases = chunkedProcessedCases[i]
 
 				await Promise.all(cases.map(caseRecord => (async () => {
@@ -728,7 +730,7 @@ if (argv.importCases) {
 		} else {
 			console.log("No records to process")
 		}
-		
+
 	} else {
 		console.log("No case provider");
 	}

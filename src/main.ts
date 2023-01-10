@@ -25,9 +25,9 @@ const pool = new Pool({
 //---------------------------------------
 // Legislation
 //---------------------------------------
-if (argv.importlegislation) {
+if (argv.importLegislation) {
 
-	const allLegislation = JSON.parse(readFileSync("./legislation.json").toString());
+	const allLegislation = await (await fetch("https://openlawnz-legislation.s3.ap-southeast-2.amazonaws.com/legislation/legislation.json")).json();
 
 	for (let a in allLegislation) {
 		const legislationItem = allLegislation[a];
@@ -176,8 +176,6 @@ if (argv.importCases) {
 
 			});
 
-		} else if (argv.casesProvider == "localjson" && argv.fileLocation) {
-			//recordsToProcess = JSON.parse(readFileSync(argv.fileLocation as string).toString());
 		}
 
 		if (recordsToProcess.length > 0) {

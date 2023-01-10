@@ -7,23 +7,6 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Import Cases (Sample)",
-            "skipFiles": [
-                "<node_internals>/**"
-            ],
-            "preLaunchTask": "tsc: build - tsconfig.json",
-            "cwd": "${workspaceFolder}/dist",
-            "program": "${workspaceFolder}/src/main.ts",
-            "envFile": "${workspaceFolder}/.env",
-            "args": ["--trace-warnings", "--importCases", "--casesProvider=localjson fileLocation=./data/sample-cases.json"],
-            "runtimeArgs": [],
-            "outFiles": [
-                "${workspaceFolder}/dist/**/*.js"
-            ]
-        },
-        {
-            "type": "node",
-            "request": "launch",
             "name": "Import Cases (JDO)",
             "skipFiles": [
                 "<node_internals>/**"
@@ -48,7 +31,7 @@
             "preLaunchTask": "tsc: build - tsconfig.json",
             "cwd": "${workspaceFolder}/dist",
             "program": "${workspaceFolder}/src/main.ts",
-            "args": ["--importlegislation"],
+            "args": ["--importLegislation"],
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
             ]

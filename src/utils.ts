@@ -1,4 +1,5 @@
 import { Worker } from "worker_threads";
+import { setTimeout as setTimeoutP } from "timers/promises";
 import crypto from 'crypto';
 
 export function chunkArrayInGroups(arr: Array<any>, size: number) {
@@ -10,7 +11,7 @@ export function chunkArrayInGroups(arr: Array<any>, size: number) {
 }
 export async function multithreadProcess<T, U>(threads: number, records: Array<T>, workerScript: string, globalWorkerData?: object): Promise<Array<U>> {
 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         let runner: NodeJS.Timeout;
         let allResults: Array<U> = [];
         var tasks: {
@@ -19,7 +20,7 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
             isProcessing: boolean
         }[] = [];
         const recordChunks = chunkArrayInGroups(records, threads);
-        const totalWorkers = Math.min(threads, recordChunks.length);
+        let totalWorkers = Math.min(threads, recordChunks.length);
         for (var i = 0; i < totalWorkers; i++) {
             (() => {
                 var task: {
@@ -36,7 +37,10 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                     task.isProcessing = false;
                 });
                 worker.on('exit', () => {
-                    task.isProcessing = false;
+                    // If exit for some reason. TODO: Investigate
+                    tasks.splice(tasks.findIndex(t => t.id == task.id), 1);
+                    totalWorkers--;
+                    console.log("- Worker exited")
                 });
 
                 task = {
@@ -47,13 +51,15 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                 tasks.push(task);
             })();
         }
-        function run() {
+        async function run() {
             var freeTasksFilter = tasks.filter(x => x.isProcessing == false);
-           
+        //    console.log("freeTasksFilter", freeTasksFilter.length);
+        //    console.log("recordChunks.length", recordChunks.length);
+        //    console.log("totalWorkers", totalWorkers);
             if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
                 console.log('Workers finished')
                 for(var i = 0; i < freeTasksFilter.length; i++) {
-                    freeTasksFilter[i].worker.terminate();
+                    await freeTasksFilter[i].worker.terminate();
                 }
                 resolve(allResults);
                 clearTimeout(runner);
@@ -65,10 +71,11 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                 freeTasksFilter[0].isProcessing = true
                 freeTasksFilter[0].worker.postMessage(records)
             }
-            runner = setTimeout(run, 10);
+            runner = await setTimeoutP(1000);
+            await run();
 
         }
-        setImmediate(run)
+        await run();
     });
 }
 

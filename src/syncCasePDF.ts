@@ -48,19 +48,29 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
         }
         // If does not exist in local cache and does exist in S3 cache, download to local
         if (!existsInLocalCache && existsInS3Cache) {
-            const data = await client.getObject(S3Location);
-            if (data.Body) {
-                const body = await data.Body.transformToString();
-                writeFileSync(fileLocation, body);
+            try {
+                const data = await client.getObject(S3Location);
+                if (data.Body) {
+                    const body = await data.Body.transformToString();
+                    writeFileSync(fileLocation, body);
+                }
+            } catch (ex) {
+                console.log("Fail writing locally");
+                console.log(ex);
             }
             // If it doees not exist in S3, and does exist in local cache, upload
         } else if (existsInLocalCache && !existsInS3Cache) {
-            var data = readFileSync(fileLocation);
-            await client.putObject({
-                ...S3Location,
-                Body: data
-            })
-        } else if(!existsInLocalCache && !existsInS3Cache) {
+            try {
+                var data = readFileSync(fileLocation);
+                await client.putObject({
+                    ...S3Location,
+                    Body: data
+                })
+            } catch (ex) {
+                console.log("Fail uploading to S3");
+                console.log(ex);
+            }
+        } else if (!existsInLocalCache && !existsInS3Cache) {
             unsynced.push(record);
         }
 
@@ -69,6 +79,5 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
     }));
 
     parentPort!.postMessage(results);
-    process.exit();
-    
+
 }))

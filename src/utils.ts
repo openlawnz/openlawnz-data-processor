@@ -48,14 +48,12 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                     worker,
                     isProcessing: false
                 }
+                console.log("+ Worker created")
                 tasks.push(task);
             })();
         }
         async function run() {
             var freeTasksFilter = tasks.filter(x => x.isProcessing == false);
-        //    console.log("freeTasksFilter", freeTasksFilter.length);
-        //    console.log("recordChunks.length", recordChunks.length);
-        //    console.log("totalWorkers", totalWorkers);
             if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
                 console.log('Workers finished')
                 for(var i = 0; i < freeTasksFilter.length; i++) {
@@ -66,12 +64,23 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                 return;
 
             } else if (recordChunks.length > 0 && freeTasksFilter.length > 0) {
-                console.log('Send records to worker id:' + freeTasksFilter[0].id)
-                var records = recordChunks.shift();
-                freeTasksFilter[0].isProcessing = true
-                freeTasksFilter[0].worker.postMessage(records)
+                for(let i = 0; i < freeTasksFilter.length; i++) {
+                    console.log("--------------------------------")
+                    console.log("freeTasksFilter", freeTasksFilter.length);
+                    console.log("recordChunks.length", recordChunks.length);
+                    console.log("totalWorkers", totalWorkers);
+                    console.log("--------------------------------")
+                    var records = recordChunks.shift();
+                    if(records) {
+                        console.log('Send records to worker id:' + freeTasksFilter[i].id)
+                        freeTasksFilter[i].isProcessing = true
+                        freeTasksFilter[i].worker.postMessage(records)
+                    }
+                }
+
+                
             }
-            runner = await setTimeoutP(1000);
+            runner = await setTimeoutP(100);
             await run();
 
         }

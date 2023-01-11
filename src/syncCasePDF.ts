@@ -26,57 +26,62 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
 }
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
+    let results: CaseRecord[][] = [];
+    try {
 
-    const results = await Promise.all(records.map(async record => {
+        results = await Promise.all(records.map(async record => {
 
-        const unsynced = [];
-
-        const fileLocation = path.join(localCasePath, record.fileKey);
-        const S3Location = {
-            Bucket: S3CaseBucket,
-            Key: record.fileKey
-        };
-
-        // Do the sync between S3 and local cache automatically
-
-        var existsInLocalCache = existsSync(fileLocation);
-        var existsInS3Cache = true;
-        try {
-            await client.headObject(S3Location);
-        } catch (ex) {
-            existsInS3Cache = false;
-        }
-        // If does not exist in local cache and does exist in S3 cache, download to local
-        if (!existsInLocalCache && existsInS3Cache) {
+            const unsynced = [];
+    
+            const fileLocation = path.join(localCasePath, record.fileKey);
+            const S3Location = {
+                Bucket: S3CaseBucket,
+                Key: record.fileKey
+            };
+    
+            // Do the sync between S3 and local cache automatically
+    
+            var existsInLocalCache = existsSync(fileLocation);
+            var existsInS3Cache = true;
             try {
-                const data = await client.getObject(S3Location);
-                if (data.Body) {
-                    const body = await data.Body.transformToString();
-                    writeFileSync(fileLocation, body);
+                await client.headObject(S3Location);
+            } catch (ex) {
+                existsInS3Cache = false;
+            }
+            // If does not exist in local cache and does exist in S3 cache, download to local
+            if (!existsInLocalCache && existsInS3Cache) {
+                try {
+                    const data = await client.getObject(S3Location);
+                    if (data.Body) {
+                        const body = await data.Body.transformToString();
+                        writeFileSync(fileLocation, body);
+                    }
+                } catch (ex) {
+                    console.log("Fail writing locally");
+                    console.log(ex);
                 }
-            } catch (ex) {
-                console.log("Fail writing locally");
-                console.log(ex);
+                // If it doees not exist in S3, and does exist in local cache, upload
+            } else if (existsInLocalCache && !existsInS3Cache) {
+                try {
+                    var data = readFileSync(fileLocation);
+                    await client.putObject({
+                        ...S3Location,
+                        Body: data
+                    })
+                } catch (ex) {
+                    console.log("Fail uploading to S3");
+                    console.log(ex);
+                }
+            } else if (!existsInLocalCache && !existsInS3Cache) {
+                unsynced.push(record);
             }
-            // If it doees not exist in S3, and does exist in local cache, upload
-        } else if (existsInLocalCache && !existsInS3Cache) {
-            try {
-                var data = readFileSync(fileLocation);
-                await client.putObject({
-                    ...S3Location,
-                    Body: data
-                })
-            } catch (ex) {
-                console.log("Fail uploading to S3");
-                console.log(ex);
-            }
-        } else if (!existsInLocalCache && !existsInS3Cache) {
-            unsynced.push(record);
-        }
-
-        return unsynced;
-
-    }));
+    
+            return unsynced;
+    
+        }));
+    } catch(ex) {
+        console.log("syncCasePDF fail");
+    }
 
     parentPort!.postMessage(results);
 

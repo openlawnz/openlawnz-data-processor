@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "fs";
+import os from 'os';
+import { writeFileSync } from "fs";
 import path from "path";
 import { setTimeout as setTimeoutP } from "timers/promises";
 import { chunkArrayInGroups, getCitation, multithreadProcess } from "./utils.js";
@@ -13,6 +14,10 @@ import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 
 const argv = await yargs(hideBin(process.argv)).argv
 const { Pool } = pkg;
+
+const MAX_THREADS = os.cpus().length * 2;
+
+console.log("MAX_THREADS", MAX_THREADS);
 
 const pool = new Pool({
 	user: 'postgres',
@@ -156,7 +161,7 @@ if (argv.importCases) {
 
 			console.log("Get cases from JDO");
 
-			const data = await fetch("https://forms.justice.govt.nz/solr/jdo/select?q=*&facet=true&facet.field=Location&facet.field=Jurisdiction&facet.limit=-1&facet.mincount=1&rows=20&json.nl=map&fq=JudgmentDate%3A%5B*%20TO%202019-2-1T23%3A59%3A59Z%5D&sort=JudgmentDate%20desc&fl=CaseName%2C%20JudgmentDate%2C%20DocumentName%2C%20id%2C%20score&wt=json")
+			const data = await fetch("https://forms.justice.govt.nz/solr/jdo/select?q=*&facet=true&facet.field=Location&facet.field=Jurisdiction&facet.limit=-1&facet.mincount=1&rows=200&json.nl=map&fq=JudgmentDate%3A%5B*%20TO%202019-2-1T23%3A59%3A59Z%5D&sort=JudgmentDate%20desc&fl=CaseName%2C%20JudgmentDate%2C%20DocumentName%2C%20id%2C%20score&wt=json")
 			const json = await data.json();
 			const docs = json.response.docs;
 			recordsToProcess = docs.map((doc: any) => {
@@ -184,8 +189,6 @@ if (argv.importCases) {
 
 			const allLegislation = (await pool.query("SELECT * FROM main.legislation")).rows;
 
-			const MAX_THREADS = 4;
-
 			if (!process.env.LOCAL_CASE_PATH || !process.env.S3_CASE_BUCKET) {
 				throw Error("Missing LOCAL_CASE_PATH or S3_CASE_BUCKET env vars");
 			}
@@ -206,12 +209,16 @@ if (argv.importCases) {
 				for (var i = 0; i < caseRecords.length; i++) {
 					const caseRecord = caseRecords[i];
 					try {
-						const res = await fetch(caseRecord.fileURL);
+						const res = await fetch(caseRecord.fileURL, {
+
+						});
 						if (res.status == 200 && res.body) {
 							var data = await res.arrayBuffer()
-							writeFileSync(path.join(localCasePath, caseRecord.fileKey), Buffer.from(data))
+							const filePath = path.join(localCasePath, caseRecord.fileKey);
+							writeFileSync(filePath, Buffer.from(data), 'binary')
+							
 						} else {
-							casesToExclude = casesToExclude.concat(caseRecords.splice(i, 1));
+							casesToExclude.push(caseRecord);
 							console.log(`Cannot download file ${caseRecord.fileURL}`);
 						}
 					} finally {
@@ -221,7 +228,9 @@ if (argv.importCases) {
 					}
 				}
 
-				await syncCasePDFs(caseRecords)
+				await syncCasePDFs(caseRecords.filter(x => {
+					return !casesToExclude.find(y => y.fileKey == x.fileKey)
+				}))
 				return {
 					casesToExclude
 				};
@@ -272,9 +281,15 @@ if (argv.importCases) {
 				}
 			}
 
-			console.log("Process cases");
+			console.log(`Process ${recordsToProcess.length} cases`);
+
+			const startProcessedCases = +new Date();
 
 			const processedCases = await processCases(recordsToProcess);
+
+			const endProcessedCases = +new Date();
+
+			const timeToProcessCases = ((endProcessedCases - startProcessedCases) / 60000).toFixed(2);
 
 			const chunkedProcessedCases: Array<ProcessedCaseRecord[]> = chunkArrayInGroups(processedCases, 10);
 
@@ -723,7 +738,9 @@ if (argv.importCases) {
 
 				}
 
-			})()
+			})();
+
+			console.log(`Process Cases took ${timeToProcessCases} minutes`);
 
 			console.log("Done");
 

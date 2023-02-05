@@ -1,8 +1,9 @@
 import { parentPort, workerData } from "worker_threads";
 import { existsSync, writeFileSync, readFileSync } from "fs";
 import path from "path";
-import { S3 } from "@aws-sdk/client-s3";
 import CaseRecord from "./CaseRecord.js";
+import { getS3Client } from "./utils.js";
+import { S3 } from "@aws-sdk/client-s3";
 
 if (!parentPort) {
     throw new Error("Must be run in a thread context");
@@ -10,19 +11,12 @@ if (!parentPort) {
 
 const { localCasePath, S3CaseBucket } = workerData;
 
-let client: S3;
+let S3Client: S3;
 
-if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-    client = new S3({
-        region: "ap-southeast-2",
-        credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-        }
-    });
-} else {
-    // TODO: Handle so that it works on just local
-    throw Error("No AWS credentials set")
+try {
+    S3Client = getS3Client();
+} catch {
+
 }
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
@@ -31,27 +25,38 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
 
         results = await Promise.all(records.map(async record => {
 
+            // TODO: Probably shouldn't be an array
             const unsynced = [];
-    
+
             const fileLocation = path.join(localCasePath, record.fileKey);
+
+            var existsInLocalCache = existsSync(fileLocation);
+
+            // If there's no S3 client, only care about downloading locally
+            if(!S3Client) {
+                if(!existsInLocalCache) {
+                    unsynced.push(record);
+                }
+                return unsynced;
+            }
+
+            // Do the sync between S3 and local cache automatically
+
             const S3Location = {
                 Bucket: S3CaseBucket,
                 Key: record.fileKey
             };
-    
-            // Do the sync between S3 and local cache automatically
-    
-            var existsInLocalCache = existsSync(fileLocation);
+            
             var existsInS3Cache = true;
             try {
-                await client.headObject(S3Location);
+                await S3Client.headObject(S3Location);
             } catch (ex) {
                 existsInS3Cache = false;
             }
             // If does not exist in local cache and does exist in S3 cache, download to local
             if (!existsInLocalCache && existsInS3Cache) {
                 try {
-                    const data = await client.getObject(S3Location);
+                    const data = await S3Client.getObject(S3Location);
                     if (data.Body) {
                         const body = await data.Body.transformToString();
                         writeFileSync(fileLocation, body);
@@ -64,7 +69,7 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
             } else if (existsInLocalCache && !existsInS3Cache) {
                 try {
                     var data = readFileSync(fileLocation);
-                    await client.putObject({
+                    await S3Client.putObject({
                         ...S3Location,
                         Body: data
                     })
@@ -75,11 +80,11 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
             } else if (!existsInLocalCache && !existsInS3Cache) {
                 unsynced.push(record);
             }
-    
+
             return unsynced;
-    
+
         }));
-    } catch(ex) {
+    } catch (ex) {
         console.log("syncCasePDF fail");
     }
 

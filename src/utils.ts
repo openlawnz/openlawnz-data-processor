@@ -1,6 +1,7 @@
 import { Worker } from "worker_threads";
 import { setTimeout as setTimeoutP } from "timers/promises";
 import crypto from 'crypto';
+import { S3 } from "@aws-sdk/client-s3";
 
 export function chunkArrayInGroups(arr: Array<any>, size: number) {
     var myArray = [];
@@ -56,7 +57,7 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
             var freeTasksFilter = tasks.filter(x => x.isProcessing == false);
             if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
                 console.log('Workers finished')
-                for(var i = 0; i < freeTasksFilter.length; i++) {
+                for (var i = 0; i < freeTasksFilter.length; i++) {
                     await freeTasksFilter[i].worker.terminate();
                 }
                 resolve(allResults);
@@ -64,21 +65,21 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                 return;
 
             } else if (recordChunks.length > 0 && freeTasksFilter.length > 0) {
-                for(let i = 0; i < freeTasksFilter.length; i++) {
+                for (let i = 0; i < freeTasksFilter.length; i++) {
                     console.log("--------------------------------")
                     console.log("freeTasksFilter", freeTasksFilter.length);
                     console.log("recordChunks.length", recordChunks.length);
                     console.log("totalWorkers", totalWorkers);
                     console.log("--------------------------------")
                     var records = recordChunks.shift();
-                    if(records) {
+                    if (records) {
                         console.log('Send records to worker id:' + freeTasksFilter[i].id)
                         freeTasksFilter[i].isProcessing = true
                         freeTasksFilter[i].worker.postMessage(records)
                     }
                 }
 
-                
+
             }
             runner = await setTimeoutP(100);
             await run();
@@ -89,19 +90,34 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
 }
 
 export function getCitation(str: string) {
-	const regCite = /(\[?\d{4}\]?)(\s*?)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+)*/;
-	// try for neutral citation
+    const regCite = /(\[?\d{4}\]?)(\s*?)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+)*/;
+    // try for neutral citation
     const match = str.match(regCite);
-	if (match && match.length > 0) {
-		return match[0];
-	} else {
-		// try for other types of citation
-		const otherCite = /((\[\d{4}\])(\s*)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+))|((HC|DC|FC) (\w{2,4} (\w{3,4}).*)(?=\s\d{1,2} ))|(COA)(\s.{5,10}\/\d{4})|(SC\s\d{0,5}\/\d{0,4})/;
-		const otherMatch = str.match(otherCite);
-        if (otherMatch  && otherMatch.length > 0) {
-			return otherMatch[0];
-		} else {
-			return null;
-		}
-	}
+    if (match && match.length > 0) {
+        return match[0];
+    } else {
+        // try for other types of citation
+        const otherCite = /((\[\d{4}\])(\s*)NZ(D|F|H|C|S|L)(A|C|R)(\s.*?)(\d+))|((HC|DC|FC) (\w{2,4} (\w{3,4}).*)(?=\s\d{1,2} ))|(COA)(\s.{5,10}\/\d{4})|(SC\s\d{0,5}\/\d{0,4})/;
+        const otherMatch = str.match(otherCite);
+        if (otherMatch && otherMatch.length > 0) {
+            return otherMatch[0];
+        } else {
+            return null;
+        }
+    }
 };
+
+export function getS3Client(): S3 {
+
+    if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        return new S3({
+            region: "ap-southeast-2",
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+            }
+        });
+    } else {
+        throw Error("No AWS credentials set")
+    }
+}

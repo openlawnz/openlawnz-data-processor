@@ -131,3 +131,4 @@ dist
 .case-cache
 scratchpad.txt
 .search-cache
+.sync-cache

@@ -14,7 +14,8 @@ export default class CaseRecord {
         public caseCitations: string[],
         public caseDate: string,
         public caseNames: string[],
-        public dateAccessed: Date) {
+        public dateAccessed: Date,
+        public fromOCR: Boolean = false) {
     }
 }
 

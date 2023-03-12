@@ -2,6 +2,8 @@ import { Worker } from "worker_threads";
 import { setTimeout as setTimeoutP } from "timers/promises";
 import crypto from 'crypto';
 import { S3 } from "@aws-sdk/client-s3";
+import { appendFileSync } from "fs";
+import { createFileSync } from "fs-extra";
 
 export function chunkArrayInGroups(arr: Array<any>, size: number) {
     var myArray = [];
@@ -120,4 +122,30 @@ export function getS3Client(): S3 {
     } else {
         throw Error("No AWS credentials set")
     }
+}
+
+export class FileLogger{
+    private runPath: string;
+	constructor(runPath: string) {
+        this.runPath = `${runPath}.txt`;
+        createFileSync(this.runPath);
+    }
+	private _log(message: string | object, consoleLog: boolean = true) {
+		let fileLogMessage;
+		if(typeof message === "object") {
+			fileLogMessage = JSON.stringify(message, null, 4);
+		} else {
+			fileLogMessage = message;
+		}
+		appendFileSync(this.runPath, fileLogMessage + "\n");
+		if(consoleLog) {
+			console.log(consoleLog);
+		}
+	}
+	public log(message: string | object, consoleLog: boolean = true) {
+		this._log(`[LOG] ` + message, consoleLog)
+	}
+	public error(message: string | object, consoleLog: boolean = true) {
+		this._log(`[ERROR] ` + message, consoleLog)
+	}
 }

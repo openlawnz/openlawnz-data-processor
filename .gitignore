@@ -132,3 +132,5 @@ dist
 scratchpad.txt
 .search-cache
 .sync-cache
+.runs
+SCRATCHPAD.txt

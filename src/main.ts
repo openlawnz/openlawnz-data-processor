@@ -3,7 +3,7 @@ import { emptyDirSync, ensureDirSync } from "fs-extra/esm";
 import { writeFileSync } from "fs";
 import path from "path";
 import { setTimeout as setTimeoutP } from "timers/promises";
-import { chunkArrayInGroups, getCitation, getS3Client, multithreadProcess } from "./utils.js";
+import { chunkArrayInGroups, FileLogger, getCitation, getS3Client, multithreadProcess } from "./utils.js";
 import yargs from 'yargs'
 import { hideBin } from "yargs/helpers";
 import pkg from 'pg';
@@ -156,12 +156,25 @@ if (argv.importStatic) {
 //---------------------------------------
 if (argv.importCases) {
 
+	const localImportCasesRunsPath = process.env.LOCAL_IMPORT_CASES_RUNS_PATH;
+
+	if(!localImportCasesRunsPath) {
+		throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH environment variable`)
+	}
+
+	ensureDirSync(localImportCasesRunsPath);
+
+	const RUN_KEY = Date.now() + "";
+
+	const logger = new FileLogger(path.join(localImportCasesRunsPath, RUN_KEY));
+
 	let S3Client: S3;
 
 	try {
 		S3Client = getS3Client();
 	} catch {
-		
+		// TODO: Tidy not having to use S3
+		throw new Error("No S3")
 	}
 
 	let recordsToProcess: CaseRecord[] = []
@@ -173,7 +186,7 @@ if (argv.importCases) {
 
 		fetchLocations.push(async () => {
 
-			console.log("Get ACC cases");
+			logger.log("Get ACC cases");
 
 			const data = await S3Client.getObject({
 				Bucket: process.env.ACC_BUCKET,
@@ -236,14 +249,21 @@ if (argv.importCases) {
 
 	if (recordsToProcess.length > 0) {
 
-		console.log(`recordsToProcess ${recordsToProcess.length}`)
+		logger.log(`recordsToProcess ${recordsToProcess.length}`)
 
 		// TODO: Tie into S3 check above	
 		if (!process.env.LOCAL_CASE_PATH || !process.env.S3_CASE_BUCKET) {
 			throw Error("Missing LOCAL_CASE_PATH or S3_CASE_BUCKET env vars");
 		}
+
+		if (!argv.reprocessOCR && !process.env.OCR_BUCKET) {
+			throw Error("reprocessOCR is not set and missing OCR_BUCKET variable");
+		}
+
 		var localCasePath = process.env.LOCAL_CASE_PATH;
 		var S3CaseBucket = process.env.S3_CASE_BUCKET;
+		var OCRBucket = process.env.OCR_BUCKET;
+		var reprocessOCR = !!argv.reprocessOCR;
 
 		const allLegislation = (await pool.query("SELECT * FROM main.legislation")).rows;
 		async function syncCasePDFs(caseRecords: CaseRecord[]): Promise<CaseRecord[]> {
@@ -254,8 +274,11 @@ if (argv.importCases) {
 			return caseRecordsNotInCaches.flat();
 		}
 
+		/*
+		THIS IS A CRITICAL FUNCTION AS IT STOPS THE PROGRAM FROM DOS'ING PROVIDERS. DO NOT OVERRIDE.
+		*/
 		async function sequentiallyDownloadFilesWithDelays(caseRecords: CaseRecord[]): Promise<{ casesToExclude: CaseRecord[] }> {
-			console.log(`sequentiallyDownloadFilesWithDelays ${caseRecords.length}`)
+			logger.log(`sequentiallyDownloadFilesWithDelays ${caseRecords.length}`)
 			var casesToExclude: CaseRecord[] = [];
 			for (var i = 0; i < caseRecords.length; i++) {
 				const caseRecord = caseRecords[i];
@@ -288,13 +311,13 @@ if (argv.importCases) {
 		}
 
 		async function processCases(caseRecords: CaseRecord[]) {
-			return multithreadProcess(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation });
+			return multithreadProcess(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation, OCRBucket, reprocessOCR });
 		}
 
-		console.log(`syncCasePDFs: ${recordsToProcess.length}`)
+		logger.log(`syncCasePDFs: ${recordsToProcess.length}`)
 		var caseRecordsNotInCaches = await syncCasePDFs(recordsToProcess);
 
-		console.log("caseRecordsNotInCaches: " + caseRecordsNotInCaches.length);
+		logger.log("caseRecordsNotInCaches: " + caseRecordsNotInCaches.length);
 
 		if (caseRecordsNotInCaches.length > 0) {
 
@@ -332,7 +355,7 @@ if (argv.importCases) {
 			}
 		}
 
-		console.log(`Process ${recordsToProcess.length} cases`);
+		logger.log(`Process ${recordsToProcess.length} cases`);
 
 		const startProcessedCases = +new Date();
 
@@ -344,7 +367,7 @@ if (argv.importCases) {
 
 		const chunkedProcessedCases: Array<ProcessedCaseRecord[]> = chunkArrayInGroups(processedCases, 10);
 
-		console.log("Truncating previous dataset")
+		logger.log("Truncating previous dataset")
 		//====================================================================
 		// TRUNCATE everything since we reprocess the whole dataset
 		//====================================================================
@@ -366,11 +389,9 @@ if (argv.importCases) {
 		// Put case and related info into DB
 		//====================================================================
 
-		console.log("Put in DB");
+		logger.log("Put in DB");
 
-		for (var i = 0; i < chunkedProcessedCases.length; i++) {
-
-			const cases = chunkedProcessedCases[i]
+		for (const cases of chunkedProcessedCases) {
 
 			await Promise.all(cases.map(caseRecord => (async () => {
 
@@ -417,8 +438,8 @@ if (argv.importCases) {
 								VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`, casePDFsValues);
 					}
 					catch (ex) {
-						console.error("Error writing case pdf records " + ex);
-						console.error(caseRecord);
+						logger.error("Error writing case pdf records " + ex);
+						logger.error(caseRecord);
 						return;
 					}
 
@@ -440,8 +461,8 @@ if (argv.importCases) {
 								VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT DO NOTHING`, caseValues);
 					}
 					catch (ex) {
-						console.error("Error writing case record " + ex);
-						console.error(caseRecord);
+						logger.error("Error writing case record " + ex);
+						logger.error(caseRecord);
 						return;
 					}
 
@@ -461,8 +482,8 @@ if (argv.importCases) {
 								WHERE pdf_id = $1`, casePDFsValues);
 					}
 					catch (ex) {
-						console.error("Error writing case pdf records update " + ex);
-						console.error(caseRecord);
+						logger.error("Error writing case pdf records update " + ex);
+						logger.error(caseRecord);
 						return;
 					}
 
@@ -484,8 +505,8 @@ if (argv.importCases) {
 								WHERE id = $1`, caseValues);
 					}
 					catch (ex) {
-						console.error("Error writing case record update " + ex);
-						console.error(caseRecord);
+						logger.error("Error writing case record update " + ex);
+						logger.error(caseRecord);
 						return;
 					}
 
@@ -526,8 +547,8 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					console.error("Error writing representation to db" + ex)
-					console.error(caseRecord.representation)
+					logger.error("Error writing representation to db" + ex)
+					logger.error(caseRecord.representation)
 				}
 
 				//---------------------------------------------------------------------
@@ -557,7 +578,7 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					console.error("Error writing judges to cases to db" + ex)
+					logger.error("Error writing judges to cases to db" + ex)
 				}
 
 				//---------------------------------------------------------------------
@@ -588,7 +609,7 @@ if (argv.importCases) {
 					}
 				}
 				catch (ex) {
-					console.error("Error writing categories to db" + ex)
+					logger.error("Error writing categories to db" + ex)
 				}
 
 				//---------------------------------------------------------------------
@@ -635,8 +656,8 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					console.error("Error writing legislation to db" + ex);
-					console.error(JSON.stringify(caseRecord, null, 4));
+					logger.error("Error writing legislation to db" + ex);
+					logger.error(JSON.stringify(caseRecord, null, 4));
 				}
 
 				//---------------------------------------------------------------------
@@ -674,8 +695,8 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					console.error("Error writing legislation to db" + ex);
-					console.error(JSON.stringify(caseRecord, null, 4));
+					logger.error("Error writing legislation to db" + ex);
+					logger.error(JSON.stringify(caseRecord, null, 4));
 				}
 
 
@@ -700,9 +721,7 @@ if (argv.importCases) {
 				fileKey: (x as any).case_id
 			}));
 
-			for (var i = 0; i < chunkedProcessedCases.length; i++) {
-
-				const cases = chunkedProcessedCases[i]
+			for (const cases of chunkedProcessedCases) {
 
 				await Promise.all(cases.map(caseRecord => (async () => {
 
@@ -754,9 +773,7 @@ if (argv.importCases) {
 				fileKey: (x as any).case_id
 			}));
 
-			for (var i = 0; i < chunkedProcessedCases.length; i++) {
-
-				const cases = chunkedProcessedCases[i]
+			for (const cases of chunkedProcessedCases) {
 
 				await Promise.all(cases.map(caseRecord => (async () => {
 
@@ -791,12 +808,12 @@ if (argv.importCases) {
 
 		})();
 
-		console.log(`Process Cases took ${timeToProcessCases} minutes`);
+		logger.log(`Process Cases took ${timeToProcessCases} minutes`);
 
-		console.log("Done");
+		logger.log("Done");
 
 	} else {
-		console.log("No records to process")
+		logger.log("No records to process")
 	}
 
 	process.exit();

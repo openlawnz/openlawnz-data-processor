@@ -13,7 +13,6 @@ import { courts, lawReports, judgeTitles, parseCaseCitations, parseCaseToCase } 
 import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitation.js"
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 import { S3 } from '@aws-sdk/client-s3';
-import Cursor from 'pg-cursor';
 
 const argv = await yargs(hideBin(process.argv)).argv
 const { Pool } = pkg;
@@ -157,7 +156,7 @@ if (argv.importStatic) {
 if (argv.importCases) {
 
 	const localImportCasesRunsPath = process.env.LOCAL_IMPORT_CASES_RUNS_PATH;
-
+	
 	if(!localImportCasesRunsPath) {
 		throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH environment variable`)
 	}
@@ -699,7 +698,7 @@ if (argv.importCases) {
 					logger.error(JSON.stringify(caseRecord, null, 4));
 				}
 
-
+				
 			})())
 
 
@@ -807,6 +806,16 @@ if (argv.importCases) {
 			}
 
 		})();
+		
+		//====================================================================
+		// Upload to Azure
+		//====================================================================
+
+		await (async () => {
+
+			await multithreadProcess(MAX_THREADS, processedCases, './syncAzure.js');
+			
+		})();
 
 		logger.log(`Process Cases took ${timeToProcessCases} minutes`);
 
@@ -814,50 +823,6 @@ if (argv.importCases) {
 
 	} else {
 		logger.log("No records to process")
-	}
-
-	process.exit();
-
-}
-
-if(argv.syncAzureCognitiveSearch) {
-
-	const localSyncPath = process.env.LOCAL_AZURE_SYNC_PATH;
-
-	if(!localSyncPath) {
-		throw new Error(`You must set LOCAL_SYNC_PATH environment variable`)
-	}
-
-	ensureDirSync(localSyncPath);
-
-	emptyDirSync(localSyncPath);
-
-	const client = await pool.connect()
-	const cursor = client.query(new Cursor('select * from main.cases'))
-
-	let caseLoop = true;
-
-	while(caseLoop) {
-		
-		let rows = await cursor.read(100);
-
-		if(rows.length === 0) {
-			caseLoop = false;
-		} else {
-
-			const rowChunks = chunkArrayInGroups(rows, 20);
-
-			for(const rowChunk of rowChunks) {
-
-				await Promise.all(rowChunk.map(async record => {
-
-					writeFileSync(path.join(localSyncPath, record.id + ".json"), JSON.stringify(record, null, 4));
-
-				}));
-
-			}
-
-		};
 	}
 
 	process.exit();

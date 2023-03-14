@@ -15,7 +15,24 @@
             "cwd": "${workspaceFolder}/dist",
             "program": "${workspaceFolder}/src/main.ts",
             "envFile": "${workspaceFolder}/.env",
-            "args": ["--trace-warnings", "--importCases", "--casesProvider=jdo", "--dangerouslySkipConfirmDownloadPDFsInOrderToHaveDebuggerWorkInVSCode"],
+            "args": ["--trace-warnings", "--importCases", "--dangerouslySkipConfirmDownloadPDFsInOrderToHaveDebuggerWorkInVSCode"],
+            "runtimeArgs": [],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Sync Azure Cognitive Search",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "preLaunchTask": "tsc: build - tsconfig.json",
+            "cwd": "${workspaceFolder}/dist",
+            "program": "${workspaceFolder}/src/main.ts",
+            "envFile": "${workspaceFolder}/.env",
+            "args": ["--trace-warnings", "--syncAzureCognitiveSearch"],
             "runtimeArgs": [],
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"

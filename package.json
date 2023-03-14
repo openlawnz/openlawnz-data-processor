@@ -9,7 +9,7 @@
         "clean": "tsc --build --clean",
         "import:static": "cd dist && node main.js --importStatic",
         "import:legislation": "cd dist && node main.js --importLegislation",
-        "import:jdo": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env  --importCases --casesProvider=jdo"
+        "import:jdo": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env  --importCases"
     },
     "repository": {
         "type": "git",
@@ -23,17 +23,21 @@
     "homepage": "https://github.com/openlawnz/openlawnz-data-processor#readme",
     "dependencies": {
         "@aws-sdk/client-s3": "^3.241.0",
+        "@azure/storage-blob": "^12.13.0",
         "@openlawnz/openlawnz-parsers": "^1.0.2",
         "dotenv": "^16.0.3",
+        "fs-extra": "^11.1.0",
         "inquirer": "^9.1.4",
         "pg": "^8.8.0",
-        "pg-cursor": "^2.7.4",
+        "pg-cursor": "^2.8.0",
         "yargs": "^17.6.2"
     },
     "devDependencies": {
+        "@types/fs-extra": "^11.0.1",
         "@types/inquirer": "^9.0.3",
         "@types/node": "^18.7.13",
         "@types/pg": "^8.6.6",
+        "@types/pg-cursor": "^2.7.0",
         "@types/yargs": "^17.0.19"
     }
 }

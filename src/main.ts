@@ -1,6 +1,6 @@
 import os from 'os';
-import { emptyDirSync, ensureDirSync } from "fs-extra/esm";
-import { writeFileSync } from "fs";
+import { ensureDirSync } from "fs-extra/esm";
+import { createWriteStream, readFileSync, unlink } from "fs";
 import path from "path";
 import { setTimeout as setTimeoutP } from "timers/promises";
 import { chunkArrayInGroups, FileLogger, getCitation, getS3Client, multithreadProcess } from "./utils.js";
@@ -13,11 +13,12 @@ import { courts, lawReports, judgeTitles, parseCaseCitations, parseCaseToCase } 
 import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitation.js"
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 import { S3 } from '@aws-sdk/client-s3';
+import https from 'https';
 
 const argv = await yargs(hideBin(process.argv)).argv
 const { Pool } = pkg;
 
-const MAX_THREADS = os.cpus().length * 2;
+const MAX_THREADS = os.cpus().length;
 
 console.log("MAX_THREADS", MAX_THREADS);
 
@@ -156,9 +157,10 @@ if (argv.importStatic) {
 if (argv.importCases) {
 
 	const localImportCasesRunsPath = process.env.LOCAL_IMPORT_CASES_RUNS_PATH;
-	
-	if(!localImportCasesRunsPath) {
-		throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH environment variable`)
+	const savePermanentJSONPath = process.env.PERMANENT_JSON;
+
+	if (!localImportCasesRunsPath || !savePermanentJSONPath) {
+		throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH and PERMANENT_JSON environment variables`)
 	}
 
 	ensureDirSync(localImportCasesRunsPath);
@@ -181,7 +183,7 @@ if (argv.importCases) {
 	const fetchLocations = [];
 
 	// TODO: Add && S3Client
-	if(process.env.ACC_BUCKET && process.env.ACC_FILE_KEY) {
+	if (process.env.ACC_BUCKET && process.env.ACC_FILE_KEY) {
 
 		fetchLocations.push(async () => {
 
@@ -215,7 +217,7 @@ if (argv.importCases) {
 	}
 
 	fetchLocations.push(async () => {
-		console.log("Get cases from JDO");
+		logger.log("Get JDO cases");
 
 		const data = await fetch("https://forms.justice.govt.nz/solr/jdo/select?q=*&facet=true&facet.field=Location&facet.field=Jurisdiction&facet.limit=-1&facet.mincount=1&rows=20&json.nl=map&fq=JudgmentDate%3A%5B*%20TO%202019-2-1T23%3A59%3A59Z%5D&sort=JudgmentDate%20desc&fl=CaseName%2C%20JudgmentDate%2C%20DocumentName%2C%20id%2C%20score&wt=json")
 		const json = await data.json();
@@ -243,8 +245,8 @@ if (argv.importCases) {
 	recordsToProcess = getRecordsResult.reduce((prev, cur) => {
 		return prev.concat(cur);
 	}, [])
-	
-	recordsToProcess = recordsToProcess.slice(0, 40);
+
+	recordsToProcess = recordsToProcess.slice(0, 200);
 
 	if (recordsToProcess.length > 0) {
 
@@ -279,22 +281,31 @@ if (argv.importCases) {
 		async function sequentiallyDownloadFilesWithDelays(caseRecords: CaseRecord[]): Promise<{ casesToExclude: CaseRecord[] }> {
 			logger.log(`sequentiallyDownloadFilesWithDelays ${caseRecords.length}`)
 			var casesToExclude: CaseRecord[] = [];
-			for (var i = 0; i < caseRecords.length; i++) {
-				const caseRecord = caseRecords[i];
+			for (const caseRecord of caseRecords) {
+
+				const filePath = path.join(localCasePath, caseRecord.fileKey);
+				const file = createWriteStream(filePath);
+
 				try {
-					const res = await fetch(caseRecord.fileURL, {
+					const response = await https.get(caseRecord.fileURL);
 
+					response.pipe(file);
+
+					await new Promise((resolve, reject) => {
+						file.on('finish', resolve);
+						file.on('error', reject);
 					});
-					if (res.status == 200 && res.body) {
-						var data = await res.arrayBuffer()
-						const filePath = path.join(localCasePath, caseRecord.fileKey);
-						writeFileSync(filePath, Buffer.from(data), 'binary')
 
-					} else {
-						casesToExclude.push(caseRecord);
-						console.log(`Cannot download file ${caseRecord.fileURL}`);
-					}
-				} finally {
+					file.close();
+				} catch (error) {
+					await new Promise(resolve => {
+						file.close(() => {
+							unlink(filePath, resolve);
+						});
+					});
+					casesToExclude.push(caseRecord);
+				}
+				finally {
 					if (!caseRecord.fileURL.startsWith("https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com")) {
 						await setTimeoutP(5000)
 					}
@@ -310,7 +321,7 @@ if (argv.importCases) {
 		}
 
 		async function processCases(caseRecords: CaseRecord[]) {
-			return multithreadProcess(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation, OCRBucket, reprocessOCR });
+			return multithreadProcess<CaseRecord, string>(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation, OCRBucket, reprocessOCR, savePermanentJSONPath });
 		}
 
 		logger.log(`syncCasePDFs: ${recordsToProcess.length}`)
@@ -358,14 +369,6 @@ if (argv.importCases) {
 
 		const startProcessedCases = +new Date();
 
-		const processedCases = await processCases(recordsToProcess);
-
-		const endProcessedCases = +new Date();
-
-		const timeToProcessCases = ((endProcessedCases - startProcessedCases) / 60000).toFixed(2);
-
-		const chunkedProcessedCases: Array<ProcessedCaseRecord[]> = chunkArrayInGroups(processedCases, 10);
-
 		logger.log("Truncating previous dataset")
 		//====================================================================
 		// TRUNCATE everything since we reprocess the whole dataset
@@ -384,6 +387,18 @@ if (argv.importCases) {
 				RESTART IDENTITY CASCADE
 			`);
 
+		const processedCases: string[] = await processCases(recordsToProcess);
+
+		const endProcessedCases = +new Date();
+
+		const timeToProcessCases = ((endProcessedCases - startProcessedCases) / 60000).toFixed(2);
+
+		const chunkedProcessedCases: string[][] = chunkArrayInGroups<string>(processedCases, 10);
+
+		const getCaseFromPermanentJSON = (filePath: string): ProcessedCaseRecord => {
+			return JSON.parse(readFileSync(filePath).toString());
+		}
+
 		//====================================================================
 		// Put case and related info into DB
 		//====================================================================
@@ -392,7 +407,9 @@ if (argv.importCases) {
 
 		for (const cases of chunkedProcessedCases) {
 
-			await Promise.all(cases.map(caseRecord => (async () => {
+			await Promise.all(cases.map(caseRecordLink => (async () => {
+
+				const caseRecord: ProcessedCaseRecord = getCaseFromPermanentJSON(caseRecordLink);
 
 				const casePDFsValues = [
 					caseRecord.fileKey,
@@ -698,7 +715,7 @@ if (argv.importCases) {
 					logger.error(JSON.stringify(caseRecord, null, 4));
 				}
 
-				
+
 			})())
 
 
@@ -722,7 +739,9 @@ if (argv.importCases) {
 
 			for (const cases of chunkedProcessedCases) {
 
-				await Promise.all(cases.map(caseRecord => (async () => {
+				await Promise.all(cases.map(caseRecordLink => (async () => {
+
+					const caseRecord: ProcessedCaseRecord = getCaseFromPermanentJSON(caseRecordLink);
 
 					const citationRecordsToCreate = parseCaseCitations(caseRecord.caseText, allCitations);
 
@@ -774,7 +793,9 @@ if (argv.importCases) {
 
 			for (const cases of chunkedProcessedCases) {
 
-				await Promise.all(cases.map(caseRecord => (async () => {
+				await Promise.all(cases.map(caseRecordLink => (async () => {
+
+					const caseRecord: ProcessedCaseRecord = getCaseFromPermanentJSON(caseRecordLink);
 
 					const casesCitedRecord = parseCaseToCase(caseRecord.caseText, allCitations, caseRecord.fileKey);
 
@@ -806,15 +827,15 @@ if (argv.importCases) {
 			}
 
 		})();
-		
+
 		//====================================================================
 		// Upload to Azure
 		//====================================================================
 
 		await (async () => {
+// const caseRecord: ProcessedCaseRecord = getCaseFromPermanentJSON(caseRecordLink);
+			//await multithreadProcess(MAX_THREADS, processedCases, './syncAzure.js');
 
-			await multithreadProcess(MAX_THREADS, processedCases, './syncAzure.js');
-			
 		})();
 
 		logger.log(`Process Cases took ${timeToProcessCases} minutes`);

@@ -5,7 +5,7 @@ import { S3 } from "@aws-sdk/client-s3";
 import { appendFileSync } from "fs";
 import { createFileSync } from "fs-extra";
 
-export function chunkArrayInGroups(arr: Array<any>, size: number) {
+export function chunkArrayInGroups<T>(arr: Array<T>, size: number) {
     var myArray = [];
     for (var i = 0; i < arr.length; i += size) {
         myArray.push(arr.slice(i, i + size));

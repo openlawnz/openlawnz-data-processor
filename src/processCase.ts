@@ -24,7 +24,7 @@ import {
     parseFromAzureOCRConversion
 } from '@openlawnz/openlawnz-parsers';
 import path from "path";
-import { existsSync } from "fs";
+import { existsSync, writeFileSync } from "fs";
 import { getS3Client } from "./utils.js";
 import { S3 } from "@aws-sdk/client-s3";
 
@@ -40,12 +40,12 @@ try {
 }
 
 
-const { localCasePath, allLegislation, OCRBucket, reprocessOCR } = workerData;
+const { localCasePath, allLegislation, OCRBucket, reprocessOCR, savePermanentJSONPath } = workerData;
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
-    let results: ProcessedCaseRecord[] = [];
+    let results: string[] = [];
     try {
-        results = await Promise.all(records.map(async (caseRecord): Promise<ProcessedCaseRecord> => {
+        results = await Promise.all(records.map(async (caseRecord): Promise<string> => {
 
             let caseText;
             let footnoteContexts;
@@ -115,8 +115,9 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 isValid,
             });
             const judges = parseJudges({ judgeTitles, fileKey, caseText });
+            const saveFilePath = path.join(savePermanentJSONPath, caseRecord.fileKey + ".json");
 
-            return new ProcessedCaseRecord(
+            writeFileSync(saveFilePath, JSON.stringify(new ProcessedCaseRecord(
                 caseRecord.fileURL,
                 caseRecord.fileKey,
                 caseRecord.fileProvider,
@@ -138,7 +139,9 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 '',
                 parsersVersion
 
-            );
+            ), null, 4))
+
+            return saveFilePath;
 
         }))
 

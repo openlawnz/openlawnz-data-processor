@@ -130,6 +130,7 @@ dist
 .pnp.*
 .case-cache
 scratchpad.txt
+.permanent-ocr
 .runs
 SCRATCHPAD.txt
 .permanent-json

@@ -2,7 +2,7 @@ import { parentPort, workerData } from "worker_threads";
 import { existsSync, writeFileSync, readFileSync } from "fs";
 import path from "path";
 import CaseRecord from "./CaseRecord.js";
-import { getS3Client } from "./utils.js";
+import { getS3Client, MultiThreadProcessMessageCMD } from "./utils.js";
 import { S3 } from "@aws-sdk/client-s3";
 
 if (!parentPort) {
@@ -58,12 +58,11 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 try {
                     const data = await S3Client.getObject(S3Location);
                     if (data.Body) {
-                        const body = await data.Body.transformToString();
+                        const body = await data.Body.transformToByteArray();
                         writeFileSync(fileLocation, body);
                     }
                 } catch (ex) {
-                    console.log("Fail writing locally");
-                    console.log(ex);
+                    throw("Fail writing locally");
                 }
                 // If it doees not exist in S3, and does exist in local cache, upload
             } else if (existsInLocalCache && !existsInS3Cache) {
@@ -74,8 +73,7 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                         Body: data
                     })
                 } catch (ex) {
-                    console.log("Fail uploading to S3");
-                    console.log(ex);
+                    throw ("Fail uploading to S3");
                 }
             } else if (!existsInLocalCache && !existsInS3Cache) {
                 unsynced.push(record);
@@ -85,9 +83,15 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
 
         }));
     } catch (ex) {
-        console.log("syncCasePDF fail");
+        parentPort!.postMessage({
+            cmdType: "error",
+            data: ex
+        });
     }
 
-    parentPort!.postMessage(results);
+    parentPort!.postMessage({
+        cmdType: "finish",
+        data: results
+    } satisfies MultiThreadProcessMessageCMD<CaseRecord[]>);
 
 }))

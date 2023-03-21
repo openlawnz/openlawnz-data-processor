@@ -1,9 +1,9 @@
 import os from 'os';
 import { ensureDirSync } from "fs-extra/esm";
-import { createWriteStream, readFileSync, unlink } from "fs";
+import { createWriteStream, unlink } from "fs";
 import path from "path";
 import { setTimeout as setTimeoutP } from "timers/promises";
-import { chunkArrayInGroups, FileLogger, getCitation, getS3Client, multithreadProcess } from "./utils.js";
+import { chunkArrayInGroups, FileLogger, getCaseFromPermanentJSON, getCitation, getS3Client, multithreadProcess } from "./utils.js";
 import yargs from 'yargs'
 import { hideBin } from "yargs/helpers";
 import pkg from 'pg';
@@ -14,20 +14,36 @@ import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitati
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
 import { S3 } from '@aws-sdk/client-s3';
 import https from 'https';
+import cliProgress from 'cli-progress';
 
 const argv = await yargs(hideBin(process.argv)).argv
 const { Pool } = pkg;
 
 const MAX_THREADS = os.cpus().length;
 
-console.log("MAX_THREADS", MAX_THREADS);
+const RUN_KEY = Date.now() + "";
+
+const localImportCasesRunsPath = process.env.LOCAL_IMPORT_CASES_RUNS_PATH;
+
+if (!localImportCasesRunsPath) {
+	throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH environment variable`)
+}
+
+ensureDirSync(localImportCasesRunsPath);
+
+const logger = new FileLogger(path.join(localImportCasesRunsPath, RUN_KEY));
+
+logger.log("MAX_THREADS: " + MAX_THREADS);
+
+const connectionString = process.env.CONNECTION_STRING;
+
+if (!connectionString) {
+	logger.error("No connection string")
+	throw new Error("No connection string");
+}
 
 const pool = new Pool({
-	user: 'postgres',
-	host: 'db',
-	database: 'dev',
-	password: 'postgres',
-	port: 5432
+	connectionString
 })
 
 //---------------------------------------
@@ -165,10 +181,6 @@ if (argv.importCases) {
 
 	ensureDirSync(localImportCasesRunsPath);
 
-	const RUN_KEY = Date.now() + "";
-
-	const logger = new FileLogger(path.join(localImportCasesRunsPath, RUN_KEY));
-
 	let S3Client: S3;
 
 	try {
@@ -246,7 +258,7 @@ if (argv.importCases) {
 		return prev.concat(cur);
 	}, [])
 
-	recordsToProcess = recordsToProcess.slice(0, 200);
+	recordsToProcess = recordsToProcess.slice(0, 2000);
 
 	if (recordsToProcess.length > 0) {
 
@@ -261,17 +273,38 @@ if (argv.importCases) {
 			throw Error("reprocessOCR is not set and missing OCR_BUCKET variable");
 		}
 
-		var localCasePath = process.env.LOCAL_CASE_PATH;
-		var S3CaseBucket = process.env.S3_CASE_BUCKET;
-		var OCRBucket = process.env.OCR_BUCKET;
-		var reprocessOCR = !!argv.reprocessOCR;
+		if (!process.env.PERMANENT_OCR) {
+			throw Error("Missing PERMANENT_OCR variable");
+		}
+
+		const localCasePath = process.env.LOCAL_CASE_PATH;
+		const S3CaseBucket = process.env.S3_CASE_BUCKET;
+		const OCRBucket = process.env.OCR_BUCKET;
+		const permamentOCR = process.env.PERMANENT_OCR;
+		const reprocessOCR = !!argv.reprocessOCR;
 
 		const allLegislation = (await pool.query("SELECT * FROM main.legislation")).rows;
+
+		
+
+		const progressBar = new cliProgress.SingleBar({
+			forceRedraw: true,
+			autopadding: true,
+			clearOnComplete: true
+		}, cliProgress.Presets.shades_classic);
+		
 		async function syncCasePDFs(caseRecords: CaseRecord[]): Promise<CaseRecord[]> {
-			const caseRecordsNotInCaches: CaseRecord[] = await multithreadProcess(MAX_THREADS, caseRecords, './syncCasePDF.js', {
+			logger.log(`syncCasePDFs - caseRecords: ` + caseRecords.length);
+			// Cannot have too many threads doing fetching
+			const caseRecordsNotInCaches: CaseRecord[] = await multithreadProcess(logger, 2, caseRecords, './syncCasePDF.js', {
 				localCasePath,
 				S3CaseBucket
+			}, (totalChunks: number) => {
+				progressBar.start(totalChunks, 0);
+			}, (totalProcessed: number) => {
+				progressBar.update(totalProcessed);
 			});
+			progressBar.stop();
 			return caseRecordsNotInCaches.flat();
 		}
 
@@ -279,7 +312,8 @@ if (argv.importCases) {
 		THIS IS A CRITICAL FUNCTION AS IT STOPS THE PROGRAM FROM DOS'ING PROVIDERS. DO NOT OVERRIDE.
 		*/
 		async function sequentiallyDownloadFilesWithDelays(caseRecords: CaseRecord[]): Promise<{ casesToExclude: CaseRecord[] }> {
-			logger.log(`sequentiallyDownloadFilesWithDelays ${caseRecords.length}`)
+			logger.log(`sequentiallyDownloadFilesWithDelays - caseRecords: ${caseRecords.length}`)
+			progressBar.start(caseRecords.length, 0);
 			var casesToExclude: CaseRecord[] = [];
 			for (const caseRecord of caseRecords) {
 
@@ -306,11 +340,15 @@ if (argv.importCases) {
 					casesToExclude.push(caseRecord);
 				}
 				finally {
+					progressBar.increment();
 					if (!caseRecord.fileURL.startsWith("https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com")) {
 						await setTimeoutP(5000)
 					}
 				}
+
 			}
+
+			progressBar.stop();
 
 			await syncCasePDFs(caseRecords.filter(x => {
 				return !casesToExclude.find(y => y.fileKey == x.fileKey)
@@ -321,10 +359,28 @@ if (argv.importCases) {
 		}
 
 		async function processCases(caseRecords: CaseRecord[]) {
-			return multithreadProcess<CaseRecord, string>(MAX_THREADS, caseRecords, './processCase.js', { localCasePath, allLegislation, OCRBucket, reprocessOCR, savePermanentJSONPath });
+			logger.log(`processCases - caseRecords: ` + caseRecords.length);
+			const result = await multithreadProcess<CaseRecord, string>(
+				logger,
+				MAX_THREADS,
+				caseRecords,
+				'./processCase.js',
+				{
+					localCasePath,
+					allLegislation,
+					OCRBucket,
+					reprocessOCR,
+					savePermanentJSONPath,
+					permamentOCR
+				}, (totalChunks: number) => {
+					progressBar.start(totalChunks, 0);
+				}, (totalProcessed: number) => {
+					progressBar.update(totalProcessed);
+				});
+				progressBar.stop();
+			return result;
 		}
 
-		logger.log(`syncCasePDFs: ${recordsToProcess.length}`)
 		var caseRecordsNotInCaches = await syncCasePDFs(recordsToProcess);
 
 		logger.log("caseRecordsNotInCaches: " + caseRecordsNotInCaches.length);
@@ -395,9 +451,6 @@ if (argv.importCases) {
 
 		const chunkedProcessedCases: string[][] = chunkArrayInGroups<string>(processedCases, 10);
 
-		const getCaseFromPermanentJSON = (filePath: string): ProcessedCaseRecord => {
-			return JSON.parse(readFileSync(filePath).toString());
-		}
 
 		//====================================================================
 		// Put case and related info into DB
@@ -405,6 +458,7 @@ if (argv.importCases) {
 
 		logger.log("Put in DB");
 
+		progressBar.start(3, 0);
 		for (const cases of chunkedProcessedCases) {
 
 			await Promise.all(cases.map(caseRecordLink => (async () => {
@@ -727,7 +781,7 @@ if (argv.importCases) {
 		//====================================================================
 		// Double Citations
 		//====================================================================
-
+		progressBar.increment();
 		await (async () => {
 
 			const allCitationsRaw: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
@@ -781,7 +835,7 @@ if (argv.importCases) {
 		//====================================================================
 		// Case to Case
 		//====================================================================
-
+		progressBar.increment();
 		await (async () => {
 
 			const allCitationsRaw: CaseCitation[] = (await pool.query("SELECT * FROM main.case_citations")).rows;
@@ -828,13 +882,20 @@ if (argv.importCases) {
 
 		})();
 
+		progressBar.stop();
+
 		//====================================================================
 		// Upload to Azure
 		//====================================================================
-
+		
 		await (async () => {
-// const caseRecord: ProcessedCaseRecord = getCaseFromPermanentJSON(caseRecordLink);
-			//await multithreadProcess(MAX_THREADS, processedCases, './syncAzure.js');
+			logger.log("Sync to Azure");
+
+			await multithreadProcess(logger, MAX_THREADS, processedCases, './syncAzure.js', undefined, (totalChunks: number) => {
+				progressBar.start(totalChunks, 0);
+			}, (totalProcessed: number) => {
+				progressBar.update(totalProcessed);
+			});
 
 		})();
 

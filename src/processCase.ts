@@ -24,8 +24,8 @@ import {
     parseFromAzureOCRConversion
 } from '@openlawnz/openlawnz-parsers';
 import path from "path";
-import { existsSync, writeFileSync } from "fs";
-import { getS3Client } from "./utils.js";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { getS3Client, MultiThreadProcessMessageCMD } from "./utils.js";
 import { S3 } from "@aws-sdk/client-s3";
 
 let conversionEngine: string;
@@ -39,8 +39,13 @@ try {
 
 }
 
-
-const { localCasePath, allLegislation, OCRBucket, reprocessOCR, savePermanentJSONPath } = workerData;
+const { 
+    localCasePath, 
+    allLegislation, 
+    OCRBucket, 
+    reprocessOCR, 
+    savePermanentJSONPath, 
+    permamentOCR } = workerData;
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
     let results: string[] = [];
@@ -56,25 +61,31 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
             const filePath = path.join(localCasePath, caseRecord.fileKey);
 
             if (!existsSync(filePath)) {
-                console.log(`[!] processCase: ${filePath} does not exist`)
-                throw ("Error"); // TODO: handle better
+                throw (`processCase: ${filePath} does not exist`);
             }
 
             if (caseRecord.fromOCR && !reprocessOCR) {
                 conversionEngine = 'azure';
                 try {
-                    const data = await S3Client.getObject({
-                        Bucket: OCRBucket,
-                        Key: fileKey
-                    });
-                    const pages = JSON.parse(await data.Body?.transformToString() || "");
+                    const ocrLocalPath = path.join(permamentOCR, fileKey);
+                    let pages;
+
+                    if (existsSync(ocrLocalPath)) {
+                        pages = readFileSync(ocrLocalPath).toJSON();
+                    } else {
+                        const data = await S3Client.getObject({
+                            Bucket: OCRBucket,
+                            Key: fileKey
+                        });
+                        const jsonData = await data.Body?.transformToString() || "";
+                        writeFileSync(ocrLocalPath, jsonData)
+                        pages = JSON.parse(jsonData);
+                    }
 
                     ({ caseText, footnoteContexts, footnotes, isValid } = parseFromAzureOCRConversion(pages));
                 } catch (ex) {
-                    throw new Error();
+                    throw (`processCase: ${filePath} OCR error`);
                 }
-
-
 
             } else {
                 conversionEngine = 'pdfjs'
@@ -84,8 +95,7 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
             }
 
             if (!caseText) {
-                console.log(`[!] processCase: ${filePath} No case text (and processPDF didn't throw Error)`);
-                throw ("Error"); // TODO: handle better
+                throw (`processCase: ${filePath} No case text (and processPDF didn't throw Error)`);
             }
 
 
@@ -146,9 +156,15 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
         }))
 
     } catch (ex) {
-        console.log("processCase fail");
+        parentPort!.postMessage({
+            cmdType: "error",
+            data: ex
+        });
     }
 
-    parentPort!.postMessage(results);
+    parentPort!.postMessage({
+        cmdType: "finish",
+        data: results
+    } satisfies MultiThreadProcessMessageCMD<string>);
 
 }));

@@ -5,7 +5,12 @@
     "type": "module",
     "main": "main.js",
     "scripts": {
+        "clear:case-cache": "rm -rf .case-cache && mkdir .case-cache",
+        "clear:permanent-json": "rm -rf .permanent-json && mkdir .permanent-json",
+        "clear:permanent-ocr": "rm -rf .permanent-ocr && mkdir .permanent-ocr",
+        "clear:cache": "npm run clear:case-cache & npm run clear:permanent-json & npm run clear:permanent-ocr",
         "build": "tsc --build",
+        "build:watch": "tsc --build --watch",
         "clean": "tsc --build --clean",
         "import:static": "cd dist && node main.js --importStatic",
         "import:legislation": "cd dist && node main.js --importLegislation",
@@ -25,19 +30,22 @@
         "@aws-sdk/client-s3": "^3.241.0",
         "@azure/storage-blob": "^12.13.0",
         "@openlawnz/openlawnz-parsers": "^1.0.2",
+        "cli-progress": "^3.12.0",
         "dotenv": "^16.0.3",
         "fs-extra": "^11.1.0",
-        "inquirer": "^9.1.4",
-        "pg": "^8.8.0",
-        "pg-cursor": "^2.8.0",
-        "yargs": "^17.6.2"
+        "inquirer": "^9.1.5",
+        "pg": "^8.10.0",
+        "pg-cursor": "^2.9.0",
+        "yargs": "^17.7.1"
     },
     "devDependencies": {
+        "@types/cli-progress": "^3.11.0",
         "@types/fs-extra": "^11.0.1",
         "@types/inquirer": "^9.0.3",
-        "@types/node": "^18.7.13",
+        "@types/node": "^18.5.5",
         "@types/pg": "^8.6.6",
         "@types/pg-cursor": "^2.7.0",
-        "@types/yargs": "^17.0.19"
+        "@types/yargs": "^17.0.23",
+        "typescript": "^5.0.2"
     }
 }

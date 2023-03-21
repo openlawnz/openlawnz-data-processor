@@ -2,8 +2,9 @@ import { Worker } from "worker_threads";
 import { setTimeout as setTimeoutP } from "timers/promises";
 import crypto from 'crypto';
 import { S3 } from "@aws-sdk/client-s3";
-import { appendFileSync } from "fs";
+import { appendFileSync, readFileSync } from "fs";
 import { createFileSync } from "fs-extra";
+import { ProcessedCaseRecord } from "./CaseRecord.js";
 
 export function chunkArrayInGroups<T>(arr: Array<T>, size: number) {
     var myArray = [];
@@ -12,7 +13,17 @@ export function chunkArrayInGroups<T>(arr: Array<T>, size: number) {
     }
     return myArray;
 }
-export async function multithreadProcess<T, U>(threads: number, records: Array<T>, workerScript: string, globalWorkerData?: object): Promise<Array<U>> {
+
+export type MultiThreadProcessMessageCMD<U> = { cmdType: "finish", data: Array<U> } | { cmdType: "log", data: any } | { cmdType: "error", data: any }
+
+export async function multithreadProcess<T, U>(
+    logger: FileLogger,
+    threads: number,
+    records: Array<T>,
+    workerScript: string,
+    globalWorkerData?: object,
+    initCallback: (totalChunks: number) => void = () => { },
+    updateCallback: (totalProcessed: number) => void = () => { }): Promise<Array<U>> {
 
     return new Promise(async (resolve, reject) => {
         let runner: NodeJS.Timeout;
@@ -23,6 +34,8 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
             isProcessing: boolean
         }[] = [];
         const recordChunks = chunkArrayInGroups(records, threads);
+        const totalRecords = records.length;
+        initCallback(totalRecords);
         let totalWorkers = Math.min(threads, recordChunks.length);
         for (var i = 0; i < totalWorkers; i++) {
             (() => {
@@ -32,18 +45,33 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                     isProcessing: boolean
                 };
                 const worker = new Worker(workerScript, { workerData: globalWorkerData });
-                worker.on('message', (results: Array<U>) => {
-                    allResults = allResults.concat(results);
-                    task.isProcessing = false;
+                worker.on('message', (cmd: MultiThreadProcessMessageCMD<U>) => {
+
+                    switch (cmd.cmdType) {
+                        case "log":
+                            logger.log(cmd.data, false) // Don't log to console because it will be noisy
+                            break;
+                        case "error":
+                            logger.error(cmd.data, false) // Don't log to console because it will be noisy
+                            break;
+                        case "finish":
+                            allResults = allResults.concat(cmd.data);
+                            task.isProcessing = false;
+                            break;
+
+                    }
+
+
                 });
-                worker.on('error', (err: U) => {
+                worker.on('error', (err: any) => {
+                    logger.error("MAJOR WORKER ERROR")
+                    logger.error(err);
                     task.isProcessing = false;
                 });
                 worker.on('exit', () => {
-                    // If exit for some reason. TODO: Investigate
                     tasks.splice(tasks.findIndex(t => t.id == task.id), 1);
                     totalWorkers--;
-                    console.log("- Worker exited")
+                    logger.log(`Worker exit - total workers: ${totalWorkers}`, false);
                 });
 
                 task = {
@@ -51,38 +79,30 @@ export async function multithreadProcess<T, U>(threads: number, records: Array<T
                     worker,
                     isProcessing: false
                 }
-                console.log("+ Worker created")
                 tasks.push(task);
             })();
         }
         async function run() {
             var freeTasksFilter = tasks.filter(x => x.isProcessing == false);
             if (recordChunks.length == 0 && freeTasksFilter.length == totalWorkers) {
-                console.log('Workers finished')
                 for (var i = 0; i < freeTasksFilter.length; i++) {
                     await freeTasksFilter[i].worker.terminate();
                 }
                 resolve(allResults);
                 clearTimeout(runner);
+                updateCallback(100)
                 return;
 
             } else if (recordChunks.length > 0 && freeTasksFilter.length > 0) {
                 for (let i = 0; i < freeTasksFilter.length; i++) {
-                    console.log("--------------------------------")
-                    console.log("freeTasksFilter", freeTasksFilter.length);
-                    console.log("recordChunks.length", recordChunks.length);
-                    console.log("totalWorkers", totalWorkers);
-                    console.log("--------------------------------")
                     var records = recordChunks.shift();
                     if (records) {
-                        console.log('Send records to worker id:' + freeTasksFilter[i].id)
                         freeTasksFilter[i].isProcessing = true
                         freeTasksFilter[i].worker.postMessage(records)
                     }
                 }
-
-
             }
+            updateCallback(totalRecords - (recordChunks.length * threads));
             runner = await setTimeoutP(100);
             await run();
 
@@ -124,28 +144,32 @@ export function getS3Client(): S3 {
     }
 }
 
-export class FileLogger{
+export const getCaseFromPermanentJSON = (filePath: string): ProcessedCaseRecord => {
+    return JSON.parse(readFileSync(filePath).toString());
+}
+
+export class FileLogger {
     private runPath: string;
-	constructor(runPath: string) {
+    constructor(runPath: string) {
         this.runPath = `${runPath}.txt`;
         createFileSync(this.runPath);
     }
-	private _log(message: string | object, consoleLog: boolean = true) {
-		let fileLogMessage;
-		if(typeof message === "object") {
-			fileLogMessage = JSON.stringify(message, null, 4);
-		} else {
-			fileLogMessage = message;
-		}
-		appendFileSync(this.runPath, fileLogMessage + "\n");
-		if(consoleLog) {
-			console.log(consoleLog);
-		}
-	}
-	public log(message: string | object, consoleLog: boolean = true) {
-		this._log(`[LOG] ` + message, consoleLog)
-	}
-	public error(message: string | object, consoleLog: boolean = true) {
-		this._log(`[ERROR] ` + message, consoleLog)
-	}
+    private _log(message: string | object, consoleLog: boolean = true) {
+        let fileLogMessage;
+        if (typeof message === "object") {
+            fileLogMessage = JSON.stringify(message, null, 4);
+        } else {
+            fileLogMessage = message;
+        }
+        appendFileSync(this.runPath, fileLogMessage + "\n");
+        if (consoleLog) {
+            console.log(message);
+        }
+    }
+    public log(message: string | object, consoleLog: boolean = true) {
+        this._log(`[LOG] ` + message, consoleLog)
+    }
+    public error(message: string | object, consoleLog: boolean = true) {
+        this._log(`[ERROR] ` + message, consoleLog)
+    }
 }

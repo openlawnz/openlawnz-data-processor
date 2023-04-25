@@ -2,5 +2,6 @@
 
 Run in VS Code with a devcontainer.
 
-    npm run build
-    npm run import:jdo
+Ask OpenLaw NZ Slack for `init.sh`
+
+    sh init.sh

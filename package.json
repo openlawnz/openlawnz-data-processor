@@ -12,8 +12,8 @@
         "build": "tsc --build",
         "build:watch": "tsc --build --watch",
         "clean": "tsc --build --clean",
-        "import:static": "cd dist && node main.js --importStatic",
-        "import:legislation": "cd dist && node main.js --importLegislation",
+        "import:static": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env --importStatic",
+        "import:legislation": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env --importLegislation",
         "import:jdo": "cd dist && node -r dotenv/config main.js dotenv_config_path=../.env  --importCases"
     },
     "repository": {

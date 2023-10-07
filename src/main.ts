@@ -9,17 +9,19 @@ import { hideBin } from "yargs/helpers";
 import pkg from 'pg';
 import crypto from 'crypto';
 import inquirer from 'inquirer';
+import fs, { ensureFileSync } from "fs-extra";
 import { courts, lawReports, judgeTitles, parseCaseCitations, parseCaseToCase } from "@openlawnz/openlawnz-parsers";
 import { CaseCitation } from "@openlawnz/openlawnz-parsers/dist/types/CaseCitation.js"
 import CaseRecord, { ProcessedCaseRecord } from "./CaseRecord.js"
-import { S3 } from '@aws-sdk/client-s3';
-import https from 'https';
+import { ListObjectsV2Request, S3 } from '@aws-sdk/client-s3';
 import cliProgress from 'cli-progress';
+import got from 'got';
+import {pipeline as streamPipeline} from 'node:stream/promises';
 
 const argv = await yargs(hideBin(process.argv)).argv
 const { Pool } = pkg;
 
-const MAX_THREADS = os.cpus().length;
+const MAX_THREADS = Math.max(1, os.cpus().length - 4);
 
 const RUN_KEY = Date.now() + "";
 
@@ -174,27 +176,30 @@ if (argv.importCases) {
 
 	const localImportCasesRunsPath = process.env.LOCAL_IMPORT_CASES_RUNS_PATH;
 	const savePermanentJSONPath = process.env.PERMANENT_JSON;
+	const s3IndexFilePath = process.env.S3_INDEX_FILE;
 
 	if (!localImportCasesRunsPath || !savePermanentJSONPath) {
 		throw new Error(`You must set LOCAL_IMPORT_CASES_RUNS_PATH and PERMANENT_JSON environment variables`)
 	}
 
+	if(!s3IndexFilePath) {
+		throw new Error("Missing " + s3IndexFilePath);
+	}
+
+	ensureFileSync(s3IndexFilePath);
+
 	ensureDirSync(localImportCasesRunsPath);
 
-	let S3Client: S3;
+	const S3Index = fs.readJSONSync(s3IndexFilePath) || [];
 
-	try {
-		S3Client = getS3Client();
-	} catch {
-		// TODO: Tidy not having to use S3
-		throw new Error("No S3")
-	}
+	let S3Client: S3 = getS3Client();
 
 	let recordsToProcess: CaseRecord[] = []
 
 	const fetchLocations = [];
 
 	// TODO: Add && S3Client
+	
 	if (process.env.ACC_BUCKET && process.env.ACC_FILE_KEY) {
 
 		fetchLocations.push(async () => {
@@ -227,20 +232,25 @@ if (argv.importCases) {
 		});
 
 	}
-
+	
 	fetchLocations.push(async () => {
 		logger.log("Get JDO cases");
 
-		const data = await fetch("https://forms.justice.govt.nz/solr/jdo/select?q=*&facet=true&facet.field=Location&facet.field=Jurisdiction&facet.limit=-1&facet.mincount=1&rows=20&json.nl=map&fq=JudgmentDate%3A%5B*%20TO%202019-2-1T23%3A59%3A59Z%5D&sort=JudgmentDate%20desc&fl=CaseName%2C%20JudgmentDate%2C%20DocumentName%2C%20id%2C%20score&wt=json")
-		const json = await data.json();
-		const docs = json.response.docs;
-		return docs.map((doc: any) => {
+		type JDOCase = {
+			JudgmentDate: string,
+			DocumentName: string,
+			CaseName: string
+		};
 
-			const fileKey = `jdo_` + (+new Date(doc.JudgmentDate)) + "_" + doc.DocumentName;
+		const data = await fetch("https://openlawnz-jsons.s3.ap-southeast-2.amazonaws.com/allCases.json")
+		const json: JDOCase[] = await data.json();
+		return json.map((doc) => {
+
+			const fileKey = `jdo_doc_` + doc.DocumentName;
 			const neutralCitation = getCitation(doc.CaseName);
 
 			return new CaseRecord(
-				"https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com/" + fileKey,
+				"https://www.justice.govt.nz/jdo_documents/workspace___SpacesStore_" + doc.DocumentName,
 				fileKey,
 				"jdo",
 				neutralCitation ? [neutralCitation] : [],
@@ -258,7 +268,7 @@ if (argv.importCases) {
 		return prev.concat(cur);
 	}, [])
 
-	recordsToProcess = recordsToProcess.slice(0, 2000);
+	//recordsToProcess = recordsToProcess.slice(0, 10000);
 
 	if (recordsToProcess.length > 0) {
 
@@ -285,8 +295,6 @@ if (argv.importCases) {
 
 		const allLegislation = (await pool.query("SELECT * FROM main.legislation")).rows;
 
-		
-
 		const progressBar = new cliProgress.SingleBar({
 			forceRedraw: true,
 			autopadding: true,
@@ -296,9 +304,10 @@ if (argv.importCases) {
 		async function syncCasePDFs(caseRecords: CaseRecord[]): Promise<CaseRecord[]> {
 			logger.log(`syncCasePDFs - caseRecords: ` + caseRecords.length);
 			// Cannot have too many threads doing fetching
-			const caseRecordsNotInCaches: CaseRecord[] = await multithreadProcess(logger, 2, caseRecords, './syncCasePDF.js', {
+			const caseRecordsNotInCaches: CaseRecord[] = await multithreadProcess(logger, MAX_THREADS, caseRecords, './syncCasePDF.js', {
 				localCasePath,
-				S3CaseBucket
+				S3CaseBucket,
+				s3Index: S3Index
 			}, (totalChunks: number) => {
 				progressBar.start(totalChunks, 0);
 			}, (totalProcessed: number) => {
@@ -321,17 +330,18 @@ if (argv.importCases) {
 				const file = createWriteStream(filePath);
 
 				try {
-					const response = await https.get(caseRecord.fileURL);
+					logger.log(`Download ${caseRecord.fileURL}`, false);
+					const gotStream = got.stream.get(caseRecord.fileURL);
 
-					response.pipe(file);
-
-					await new Promise((resolve, reject) => {
-						file.on('finish', resolve);
-						file.on('error', reject);
-					});
+					try {
+						await streamPipeline(gotStream, file);
+					} catch (error) {
+						logger.log(`Error with stream ${caseRecord.fileKey} ${error}`, false);
+					}
 
 					file.close();
 				} catch (error) {
+					logger.log(`Error with ${caseRecord.fileKey} ${error}`, false);
 					await new Promise(resolve => {
 						file.close(() => {
 							unlink(filePath, resolve);
@@ -342,7 +352,7 @@ if (argv.importCases) {
 				finally {
 					progressBar.increment();
 					if (!caseRecord.fileURL.startsWith("https://openlawnz-pdfs-prod.s3-ap-southeast-2.amazonaws.com")) {
-						await setTimeoutP(5000)
+						await setTimeoutP(1000)
 					}
 				}
 
@@ -508,8 +518,9 @@ if (argv.importCases) {
 								VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`, casePDFsValues);
 					}
 					catch (ex) {
-						logger.error("Error writing case pdf records " + ex);
-						logger.error(caseRecord);
+						logger.error("Error writing case pdf records", false);
+						logger.error(JSON.stringify(ex, null, 2), false);
+						logger.error(caseRecord.fileKey, false);
 						return;
 					}
 
@@ -531,8 +542,9 @@ if (argv.importCases) {
 								VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT DO NOTHING`, caseValues);
 					}
 					catch (ex) {
-						logger.error("Error writing case record " + ex);
-						logger.error(caseRecord);
+						logger.error("Error writing case record", false);
+						logger.error(JSON.stringify(ex, null, 2), false);
+						logger.error(caseRecord.fileKey, false);
 						return;
 					}
 
@@ -552,8 +564,9 @@ if (argv.importCases) {
 								WHERE pdf_id = $1`, casePDFsValues);
 					}
 					catch (ex) {
-						logger.error("Error writing case pdf records update " + ex);
-						logger.error(caseRecord);
+						logger.error("Error writing case pdf records update", false);
+						logger.error(JSON.stringify(ex, null, 2), false);
+						logger.error(caseRecord.fileKey, false);
 						return;
 					}
 
@@ -575,8 +588,9 @@ if (argv.importCases) {
 								WHERE id = $1`, caseValues);
 					}
 					catch (ex) {
-						logger.error("Error writing case record update " + ex);
-						logger.error(caseRecord);
+						logger.error("Error writing case record update", false);
+						logger.error(JSON.stringify(ex, null, 2), false);
+						logger.error(caseRecord.fileKey, false);
 						return;
 					}
 
@@ -617,8 +631,9 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					logger.error("Error writing representation to db" + ex)
-					logger.error(caseRecord.representation)
+					logger.error("Error writing representation to db", false);
+					logger.error(JSON.stringify(ex, null, 2), false);
+					logger.error(caseRecord.fileKey, false);
 				}
 
 				//---------------------------------------------------------------------
@@ -648,7 +663,9 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					logger.error("Error writing judges to cases to db" + ex)
+					logger.error("Error writing judges to cases to db", false)
+					logger.error(JSON.stringify(ex, null, 2), false);
+					logger.error(caseRecord.fileKey, false);
 				}
 
 				//---------------------------------------------------------------------
@@ -679,7 +696,9 @@ if (argv.importCases) {
 					}
 				}
 				catch (ex) {
-					logger.error("Error writing categories to db" + ex)
+					logger.error("Error writing categories to db", false)
+					logger.error(JSON.stringify(ex, null, 2), false);
+					logger.error(caseRecord.fileKey, false);
 				}
 
 				//---------------------------------------------------------------------
@@ -726,8 +745,9 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					logger.error("Error writing legislation to db" + ex);
-					logger.error(JSON.stringify(caseRecord, null, 4));
+					logger.error("Error writing legislation to db", false);
+					logger.error(JSON.stringify(ex, null, 2), false);
+					logger.error(caseRecord.fileKey, false);
 				}
 
 				//---------------------------------------------------------------------
@@ -765,8 +785,9 @@ if (argv.importCases) {
 
 				}
 				catch (ex) {
-					logger.error("Error writing legislation to db" + ex);
-					logger.error(JSON.stringify(caseRecord, null, 4));
+					logger.error("Error writing legislation to db", false);
+					logger.error(JSON.stringify(ex, null, 2), false);
+					logger.error(caseRecord.fileKey, false);
 				}
 
 
@@ -901,12 +922,66 @@ if (argv.importCases) {
 
 		logger.log(`Process Cases took ${timeToProcessCases} minutes`);
 
-		logger.log("Done");
+		logger.log("Done");		
 
 	} else {
 		logger.log("No records to process")
 	}
 
 	process.exit();
+
+}
+
+if(argv.rebuildS3Index) {
+	
+	if (!process.env.S3_INDEX_FILE) {
+		throw Error("Missing LOCAL_CASE_PATH or S3_CASE_BUCKET env vars");
+	}
+
+	let S3Client: S3;
+
+	try {
+		S3Client = getS3Client();
+	} catch {
+
+	}
+
+	if(!process.env.S3_INDEX_FILE) {
+		throw new Error("Missing " + process.env.S3_INDEX_FILE);
+	}
+
+	async function listObjectNames(): Promise<string[]> {
+		try {
+			// Create an array to store the object names
+			let objectNames: string[] = [];
+	
+			// Define the parameters for the listObjectsV2 call
+			let params: ListObjectsV2Request = {
+				Bucket: process.env.S3_CASE_BUCKET,
+			};
+	
+			do {
+				// Call S3 to list the current batch of objects
+				let response = await S3Client.listObjectsV2(params);
+	
+				// Get the names from the returned objects and push them to the objectNames array
+				response.Contents?.forEach((obj: any) => obj.Key && objectNames.push(obj.Key));
+	
+				// If the response is truncated, set the marker to get the next batch of objects
+				params.ContinuationToken = response.NextContinuationToken;
+			} while (params.ContinuationToken);
+	
+			// Write the object names to a file
+			fs.writeFileSync(process.env.S3_INDEX_FILE as string, JSON.stringify(objectNames, null, 2), 'utf8');
+			console.log(`Object names written to ${process.env.S3_INDEX_FILE}`);
+	
+			return objectNames;
+		} catch (error) {
+			console.error('Error occurred while listing objects', error);
+			throw error;
+		}
+	}
+	
+	await listObjectNames();
 
 }

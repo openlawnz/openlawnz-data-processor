@@ -9,7 +9,14 @@ if (!parentPort) {
     throw new Error("Must be run in a thread context");
 }
 
-const { localCasePath, S3CaseBucket } = workerData;
+const { localCasePath, S3CaseBucket, s3Index }: {
+    localCasePath: string,
+    S3CaseBucket: string,
+    s3Index: string[]
+} = workerData;
+
+
+
 
 let S3Client: S3;
 
@@ -47,12 +54,8 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 Key: record.fileKey
             };
             
-            var existsInS3Cache = true;
-            try {
-                await S3Client.headObject(S3Location);
-            } catch (ex) {
-                existsInS3Cache = false;
-            }
+            var existsInS3Cache = s3Index.includes(record.fileKey);
+            
             // If does not exist in local cache and does exist in S3 cache, download to local
             if (!existsInLocalCache && existsInS3Cache) {
                 try {

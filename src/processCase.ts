@@ -39,6 +39,9 @@ try {
 
 }
 
+// Suppress pdfjs warnings
+console.log = function() {};
+
 const { 
     localCasePath, 
     allLegislation, 
@@ -98,7 +101,11 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 throw (`processCase: ${filePath} No case text (and processPDF didn't throw Error)`);
             }
 
-
+            parentPort!.postMessage({
+                cmdType: "log",
+                data: `Process case: ${caseRecord.fileKey}`
+            });
+            
             const fileProvider = caseRecord.fileProvider;
             const caseLocation = parseLocation(caseText);
             const caseCitations = parseNeutralCitation({

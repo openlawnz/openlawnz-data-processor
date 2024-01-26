@@ -39,15 +39,16 @@ try {
 
 }
 
-// Suppress pdfjs warnings
-console.log = function() {};
+// Suppress pdfjs warnings. TODO: Wire up to using port
+console.log = function () { };
+console.error = function () { };
 
-const { 
-    localCasePath, 
-    allLegislation, 
-    OCRBucket, 
-    reprocessOCR, 
-    savePermanentJSONPath, 
+const {
+    localCasePath,
+    allLegislation,
+    OCRBucket,
+    reprocessOCR,
+    savePermanentJSONPath,
     permamentOCR } = workerData;
 
 parentPort.on("message", (async (records: CaseRecord[]) => {
@@ -74,7 +75,7 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                     let pages;
 
                     if (existsSync(ocrLocalPath)) {
-                        pages = readFileSync(ocrLocalPath).toJSON();
+                        pages = JSON.parse(readFileSync(ocrLocalPath).toString());
                     } else {
                         const data = await S3Client.getObject({
                             Bucket: OCRBucket,
@@ -84,7 +85,7 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                         writeFileSync(ocrLocalPath, jsonData)
                         pages = JSON.parse(jsonData);
                     }
-
+                    
                     ({ caseText, footnoteContexts, footnotes, isValid } = parseFromAzureOCRConversion(pages));
                 } catch (ex) {
                     throw (`processCase: ${filePath} OCR error`);
@@ -105,60 +106,65 @@ parentPort.on("message", (async (records: CaseRecord[]) => {
                 cmdType: "log",
                 data: `Process case: ${caseRecord.fileKey}`
             });
-            
-            const fileProvider = caseRecord.fileProvider;
-            const caseLocation = parseLocation(caseText);
-            const caseCitations = parseNeutralCitation({
-                caseCitations: caseRecord.caseCitations,
-                fileKey: caseRecord.fileKey,
-                caseDate: caseRecord.caseDate,
-                caseText: caseText,
-            });
-            const court = parseCourt({
-                caseText: caseText,
-                caseCitations,
-                courts,
-            });
-            const lawReport = parseLawReport(lawReports, caseCitations);
-            const category = parseCategory(fileProvider, court, lawReport);
-            const filingNumber = parseCourtFilingNumber(caseText);
-            const representation = parseRepresentation(caseText);
-            const legislation = parseLegislation({
-                allLegislation,
-                caseText,
-                footnoteContexts,
-                footnotes,
-                fileKey,
-                isValid,
-            });
-            const judges = parseJudges({ judgeTitles, fileKey, caseText });
-            const saveFilePath = path.join(savePermanentJSONPath, caseRecord.fileKey + ".json");
 
-            writeFileSync(saveFilePath, JSON.stringify(new ProcessedCaseRecord(
-                caseRecord.fileURL,
-                caseRecord.fileKey,
-                caseRecord.fileProvider,
-                caseRecord.caseDate,
-                caseRecord.caseNames,
-                caseRecord.dateAccessed,
-                isValid,
-                caseText,
-                caseCitations,
-                caseLocation,
-                representation,
-                category,
-                court,
-                filingNumber,
-                lawReport,
-                legislation,
-                judges,
-                conversionEngine,
-                '',
-                parsersVersion
+            try {
+                const fileProvider = caseRecord.fileProvider;
+                const caseLocation = parseLocation(caseText);
+                const caseCitations = parseNeutralCitation({
+                    caseCitations: caseRecord.caseCitations,
+                    fileKey: caseRecord.fileKey,
+                    caseDate: caseRecord.caseDate,
+                    caseText: caseText,
+                });
+                const court = parseCourt({
+                    caseText: caseText,
+                    caseCitations,
+                    courts,
+                });
+                const lawReport = parseLawReport(lawReports, caseCitations);
+                const category = parseCategory(fileProvider, court, lawReport);
+                const filingNumber = parseCourtFilingNumber(caseText);
+                const representation = parseRepresentation(caseText);
+                const legislation = parseLegislation({
+                    allLegislation,
+                    caseText,
+                    footnoteContexts,
+                    footnotes,
+                    fileKey,
+                    isValid,
+                });
+                const judges = parseJudges({ judgeTitles, fileKey, caseText });
+                const saveFilePath = path.join(savePermanentJSONPath, caseRecord.fileKey + ".json");
 
-            ), null, 4))
+                writeFileSync(saveFilePath, JSON.stringify(new ProcessedCaseRecord(
+                    caseRecord.fileURL,
+                    caseRecord.fileKey,
+                    caseRecord.fileProvider,
+                    caseRecord.caseDate,
+                    caseRecord.caseNames,
+                    caseRecord.dateAccessed,
+                    isValid,
+                    caseText,
+                    caseCitations,
+                    caseLocation,
+                    representation,
+                    category,
+                    court,
+                    filingNumber,
+                    lawReport,
+                    legislation,
+                    judges,
+                    conversionEngine,
+                    '',
+                    parsersVersion
 
-            return saveFilePath;
+                ), null, 4))
+
+                return saveFilePath;
+
+            } catch (ex) {
+                throw (`processCase: ${filePath} error: \t` + ex);
+            }
 
         }))
 

@@ -14,7 +14,8 @@
         "clean": "tsc --build --clean",
         "import:static": "cd dist && node --env-file ../.env  main.js --importStatic",
         "import:legislation": "cd dist && node --env-file ../.env main.js --importLegislation",
-        "import:jdo": "cd dist && node --env-file ../.env main.js --importCases",
+        "import:jdo": "cd dist && node --env-file ../.env main.js --importCases --newRun",
+        "import:runFromCache": "cd dist && node --env-file ../.env main.js --importCases --runFromCache",
         "import:rebuildS3Index": "cd dist && node --env-file ../.env main.js --rebuildS3Index"
     },
     "repository": {
@@ -32,6 +33,7 @@
         "@azure/storage-blob": "^12.16.0",
         "@openlawnz/openlawnz-parsers": "^1.0.2",
         "cli-progress": "^3.12.0",
+        "date-fns": "^3.2.0",
         "fs-extra": "^11.1.1",
         "got": "^13.0.0",
         "inquirer": "^9.2.11",

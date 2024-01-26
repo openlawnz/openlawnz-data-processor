@@ -148,28 +148,37 @@ export const getCaseFromPermanentJSON = (filePath: string): ProcessedCaseRecord 
     return JSON.parse(readFileSync(filePath).toString());
 }
 
+enum LogType {
+    log,
+    error
+}
+
 export class FileLogger {
-    private runPath: string;
+    
+    private logPath: string;
+    private errorPath: string;
     constructor(runPath: string) {
-        this.runPath = `${runPath}.txt`;
-        createFileSync(this.runPath);
+        this.logPath = `${runPath}.log.txt`;
+        this.errorPath = `${runPath}.error.txt`;
+        createFileSync(this.logPath);
+        createFileSync(this.errorPath);
     }
-    private _log(message: string | object, consoleLog: boolean = true) {
+    private _log(logType:LogType, message: string | object, consoleLog: boolean = true) {
         let fileLogMessage;
         if (typeof message === "object") {
             fileLogMessage = JSON.stringify(message, null, 4);
         } else {
             fileLogMessage = message;
         }
-        appendFileSync(this.runPath, fileLogMessage + "\n");
+        appendFileSync(logType == LogType.log ? this.logPath : this.errorPath, fileLogMessage + "\n");
         if (consoleLog) {
             console.log(message);
         }
     }
     public log(message: string | object, consoleLog: boolean = true) {
-        this._log(`[LOG] ` + message, consoleLog)
+        this._log(LogType.log, message, consoleLog)
     }
     public error(message: string | object, consoleLog: boolean = true) {
-        this._log(`[ERROR] ` + message, consoleLog)
+        this._log(LogType.error, message, consoleLog)
     }
 }

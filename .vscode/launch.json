@@ -15,7 +15,24 @@
             "cwd": "${workspaceFolder}/dist",
             "program": "${workspaceFolder}/src/main.ts",
             "envFile": "${workspaceFolder}/.env",
-            "args": ["--trace-warnings", "--importCases", "--dangerouslySkipConfirmDownloadPDFsInOrderToHaveDebuggerWorkInVSCode"],
+            "args": ["--trace-warnings", "--importCases", "--newRun", "--dangerouslySkipConfirmDownloadPDFsInOrderToHaveDebuggerWorkInVSCode"],
+            "runtimeArgs": [],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Rerun from Cache (JDO)",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "preLaunchTask": "tsc: build - tsconfig.json",
+            "cwd": "${workspaceFolder}/dist",
+            "program": "${workspaceFolder}/src/main.ts",
+            "envFile": "${workspaceFolder}/.env",
+            "args": ["--trace-warnings", "--importCases", "--runFromCache"],
             "runtimeArgs": [],
             "outFiles": [
                 "${workspaceFolder}/dist/**/*.js"
